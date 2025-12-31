@@ -9,5 +9,5 @@
 .vscode/
 
 # Local data
-task.md
-walkthrough.md
+/task.md
+/walkthrough.md
