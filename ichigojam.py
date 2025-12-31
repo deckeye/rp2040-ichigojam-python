@@ -206,7 +206,7 @@ def IN(pin=_REQ):
     """Read digital input from pin."""
     return machine.Pin(pin, machine.Pin.IN, machine.Pin.PULL_UP).value()
 
-_OUT_PINS = [2, 3, 4, 5, 6, 7] # IchigoJam OUT1-6 mapping candidate
+_OUT_PINS = [1, 2, 3, 4, 5, 6] # Align OUT1-6 with GPIO 1-6
 
 @_check_args("OUT")
 def OUT(pin=_REQ, val=None):
