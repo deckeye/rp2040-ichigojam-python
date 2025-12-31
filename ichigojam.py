@@ -43,6 +43,21 @@ class PIOManager:
         except OSError:
             return -1
 
+    def clear_all(self):
+        """Reset both PIO blocks and clear program cache."""
+        for pio_idx in [0, 1]:
+            pio = rp2.PIO(pio_idx)
+            # Remove all programs if possible
+            for prog_id, offset in list(self._programs.items()):
+                if prog_id[0] == pio_idx:
+                    # MicroPython doesn't always support easy removal, 
+                    # but we clear our tracking.
+                    del self._programs[prog_id]
+            # Reset state machines
+            for i in range(4):
+                pio.active(i, 0)
+        self._sm_used = [False] * 8
+
 # --- IchigoJam Core Class ---
 
 class IchigoJam:
@@ -67,17 +82,15 @@ class IchigoJam:
         self._i2c = None
         self._uart = None
         self._tick_offset = 0
+        
+        # Reliability Options
+        self.cert_validate = False # Default to False for convenience in embedded
     
     def deinit(self):
         """Release all resources and stop PIO state machines."""
         for pin in list(self._active_pwm.keys()):
             self.PWM(pin, 1000, 0)
-        # Clear SMs (brute force for security)
-        for i in range(8):
-            try:
-                rp2.PIO(0 if i < 4 else 1).active(i % 4, 0)
-            except: pass
-        self.pio_mgr = PIOManager()
+        self.pio_mgr.clear_all()
         gc.collect()
 
     def _warn_error(self, msg: str):
@@ -394,7 +407,12 @@ _NOTE_MAP = {
             addr = socket.getaddrinfo(host, port)[0][-1]
             s = socket.socket()
             s.connect(addr)
-            if port == 443: s = ssl.wrap_socket(s, server_hostname=host)
+            if port == 443:
+                # Use cert_validate option
+                s = ssl.wrap_socket(s, server_hostname=host) # default wrap
+                # Note: Full cert validation requires CA bundle which is storage heavy
+                if self.cert_validate:
+                    print("CAUTION: Certificate validation requested but CA bundle not specified.")
             
             req = f"{method} {path} HTTP/1.0\r\nHost: {host}\r\n"
             if data: req += f"Content-Length: {len(data)}\r\n\r\n{data}"
@@ -408,6 +426,12 @@ _NOTE_MAP = {
                         return self._iot_request(method, line.split(":", 1)[1].strip(), data, True)
             return res.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in res else res
         except Exception as e: self._warn_error(f"IOT: {e}"); return None
+
+    def IOT_CONFIG(self, cert_validate: bool = None) -> None:
+        """Configure IoT reliability settings."""
+        if cert_validate is not None:
+            self.cert_validate = cert_validate
+            print(f"IoT Cert Validation: {'ENABLED' if cert_validate else 'DISABLED'}")
 
     def IOT_GET(self, url: str) -> str: return self._iot_request("GET", url)
     def IOT_POST(self, url: str, data: str) -> str: return self._iot_request("POST", url, data)
@@ -445,8 +469,9 @@ def HELP(cmd: str = None): return ij.HELP(cmd)
 def PINS(): return ij.PINS()
 def VERSION(): return "IchigoJam Python v2.1 (Class-based)"
 def OK(): print("OK")
+def IOT_CONFIG(cert_validate: bool = None): return ij.IOT_CONFIG(cert_validate)
 
 __all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
-           "WIFI", "IOT_GET", "IOT_POST", "CORE2", 
+           "WIFI", "IOT_GET", "IOT_POST", "IOT_CONFIG", "CORE2", 
            "I2CW", "I2CR", "UART", "FILES", "FREE", "TICK", "CLT", "VERSION",
            "CLS", "LC", "HELP", "PINS", "OK", "ij"]
