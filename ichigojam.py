@@ -379,45 +379,6 @@ _NOTE_MAP = {
         if cmd: print(_HELP_DATA.get(cmd.upper(), "Unknown command."))
         else: print("Available Commands: " + ", ".join(sorted(_HELP_DATA.keys())))
 
-    def PINS(self) -> None:
-        print(f"Board: {self.machine_name}")
-        print(f"I/O: LED={self.PIN_LED}, BZ={self.PIN_BUZZER}, BTN={self.PIN_BUTTON}")
-        print(f"Comm: I2C(SCL:{self.PIN_SCL}, SDA:{self.PIN_SDA}), UART(TX:0, RX:1)")
-
-# --- Global Instance and Wrappers ---
-
-ij = IchigoJam()
-
-def LED(val: int = -1): return ij.LED(val)
-def WAIT(time: int, unit: str = "frame"): return ij.WAIT(time, unit)
-def IN(pin: int): return ij.IN(pin)
-def OUT(pin: int, val: int = None): return ij.OUT(pin, val)
-def BEEP(note: int = 440, duration: int = 10): return ij.BEEP(note, duration)
-def ANA(pin: int, volt: bool = False): return ij.ANA(pin, volt)
-def PWM(pin: int, freq: int, duty: float): return ij.PWM(pin, freq, duty)
-def WS_LED(data: list, pin: int = 25): return ij.WS_LED(data, pin)
-def RND(a: int, b: int = None): return ij.RND(a, b)
-def BTN(callback=None): return ij.BTN(callback)
-def SAVE(target): return ij.SAVE(target)
-def LOAD(target): return ij.LOAD(target)
-def WIFI(ssid: str, password: str): return ij.WIFI(ssid, password)
-def IOT_GET(url: str): return ij.IOT_GET(url) # Placeholder, implement IOT logic in class if needed
-def IOT_POST(url: str, data: str): return ij.IOT_POST(url, data) # Placeholder
-def CORE2(func): return ij.CORE2(func)
-def CLS(): return ij.CLS()
-def LC(x: int, y: int): return ij.LC(x, y)
-def I2CW(addr: int, data): return ij.I2CW(addr, data)
-def I2CR(addr: int, size: int): return ij.I2CR(addr, size)
-def UART(val): return ij.UART(val)
-def TICK(): return ij.TICK()
-def CLT(): return ij.CLT()
-def FREE(): return ij.FREE()
-def FILES(): return ij.FILES()
-def HELP(cmd: str = None): return ij.HELP(cmd)
-def PINS(): return ij.PINS()
-def VERSION(): return "IchigoJam Python v2.1 (Class-based)"
-def OK(): print("OK")
-
     def _iot_request(self, method: str, url: str, data: str = None, follow_redirects: bool = True) -> str:
         """Internal HTTP/HTTPS request handler."""
         try:
@@ -450,6 +411,40 @@ def OK(): print("OK")
 
     def IOT_GET(self, url: str) -> str: return self._iot_request("GET", url)
     def IOT_POST(self, url: str, data: str) -> str: return self._iot_request("POST", url, data)
+
+# --- Global Instance and Wrappers ---
+
+ij = IchigoJam()
+
+def LED(val: int = -1): return ij.LED(val)
+def WAIT(time: int, unit: str = "frame"): return ij.WAIT(time, unit)
+def IN(pin: int): return ij.IN(pin)
+def OUT(pin: int, val: int = None): return ij.OUT(pin, val)
+def BEEP(note: int = 440, duration: int = 10): return ij.BEEP(note, duration)
+def ANA(pin: int, volt: bool = False): return ij.ANA(pin, volt)
+def PWM(pin: int, freq: int, duty: float): return ij.PWM(pin, freq, duty)
+def WS_LED(data: list, pin: int = 25): return ij.WS_LED(data, pin)
+def RND(a: int, b: int = None): return ij.RND(a, b)
+def BTN(callback=None): return ij.BTN(callback)
+def SAVE(target): return ij.SAVE(target)
+def LOAD(target): return ij.LOAD(target)
+def WIFI(ssid: str, password: str): return ij.WIFI(ssid, password)
+def IOT_GET(url: str): return ij.IOT_GET(url)
+def IOT_POST(url: str, data: str): return ij.IOT_POST(url, data)
+def CORE2(func): return ij.CORE2(func)
+def CLS(): return ij.CLS()
+def LC(x: int, y: int): return ij.LC(x, y)
+def I2CW(addr: int, data): return ij.I2CW(addr, data)
+def I2CR(addr: int, size: int): return ij.I2CR(addr, size)
+def UART(val): return ij.UART(val)
+def TICK(): return ij.TICK()
+def CLT(): return ij.CLT()
+def FREE(): return ij.FREE()
+def FILES(): return ij.FILES()
+def HELP(cmd: str = None): return ij.HELP(cmd)
+def PINS(): return ij.PINS()
+def VERSION(): return "IchigoJam Python v2.1 (Class-based)"
+def OK(): print("OK")
 
 __all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
            "WIFI", "IOT_GET", "IOT_POST", "CORE2", 
