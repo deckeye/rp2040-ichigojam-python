@@ -112,8 +112,7 @@ _HELP_DATA = {
     "OUT": "OUT(pin, val): Single pin. OUT(val): Bit pattern.",
     "BEEP": "BEEP(note=440, duration=10): Plays sound. 'note' can be Hz or string like 'C4'.",
     "ANA": "ANA(pin, volt=False): Analog input (0-1023 or voltage).",
-    "PWM": "PWM(pin, freq, duty): Precise PIO PWM.",
-    "PWM_STOP": "PWM_STOP(pin): Stop PWM on pin.",
+    "PWM": "PWM(pin, freq, duty): Precise PIO PWM. duty=0 to stop.",
     "WS_LED": "WS_LED(data, pin=25): Drives WS2812B LEDs.",
     "RND": "RND(n): Random 0 to n-1. RND(a, b): Random a to b-1.",
     "BTN": "BTN(callback=None): Returns button state or sets callback.",
@@ -189,8 +188,14 @@ _OUT_PINS = [2, 3, 4, 5, 6, 7] # IchigoJam OUT1-6 mapping candidate
 @_check_args("OUT")
 def OUT(pin=_REQ, val=None):
     """Output to pin. OUT(pin, val) for single pin, OUT(pattern) for bit pattern."""
+    global _active_pwm
     try:
         if val is not None:
+            # Stop PWM on this pin if active
+            if pin in _active_pwm:
+                sm_id, sm = _active_pwm.pop(pin)
+                sm.active(0)
+                pio_mgr.free_sm(sm_id)
             # Single pin mode
             machine.Pin(pin, machine.Pin.OUT).value(1 if val else 0)
         else:
@@ -253,9 +258,18 @@ def ANA(pin=_REQ, volt=False):
 
 @_check_args("PWM")
 def PWM(pin=_REQ, freq=_REQ, duty=_REQ):
-    """Start PIO-based PWM on pin. duty: 0.0-1.0."""
+    """Start PIO-based PWM on pin. duty: 0.0-1.0. Set duty=0 to stop PWM."""
     global _active_pwm
     try:
+        # Stop PWM if duty is 0
+        if duty == 0:
+            if pin in _active_pwm:
+                sm_id, sm = _active_pwm.pop(pin)
+                sm.active(0)
+                pio_mgr.free_sm(sm_id)
+                machine.Pin(pin, machine.Pin.OUT).value(0)
+            return
+        
         # Stop existing PWM on this pin
         if pin in _active_pwm:
             old_sm_id, old_sm = _active_pwm[pin]
@@ -275,14 +289,6 @@ def PWM(pin=_REQ, freq=_REQ, duty=_REQ):
         _active_pwm[pin] = (sm_id, sm)
     except Exception as e: 
         _warn_error(f"PWM: {e}")
-
-def PWM_STOP(pin):
-    """Stop PWM on specified pin."""
-    global _active_pwm
-    if pin in _active_pwm:
-        sm_id, sm = _active_pwm.pop(pin)
-        sm.active(0)
-        pio_mgr.free_sm(sm_id)
 
 @_check_args("WS_LED")
 def WS_LED(data=_REQ, pin=25):
@@ -466,6 +472,6 @@ def OK():
     """Display OK message."""
     print("OK")
 
-__all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "PWM_STOP", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
+__all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
            "WIFI", "IOT_GET", "IOT_POST", "CORE2", "USB_KEYBOARD", "USB_MOUSE", "USB_JOYPAD",
            "CLS", "LC", "SPRITE", "DRAW_BUFFER", "HELP", "PINS", "OK"]
