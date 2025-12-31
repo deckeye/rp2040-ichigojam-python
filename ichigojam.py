@@ -188,11 +188,25 @@ def LED(val=_REQ):
         _warn_error(f"LED: {e}")
 
 def _validate_gpio(pin, cmd):
-    """Internal helper to validate GPIO pin range (0-28)."""
-    valid_range = range(0, 29)
-    if pin not in valid_range:
-        _warn_error(f"{cmd}: Pin {pin} is out of range. Use GPIO 0-28.")
+    """Internal helper to validate GPIO pin and provide usage guidance."""
+    # 0-29 is the physical range for RP2040, but 29 is often internal
+    if not isinstance(pin, int) or pin < 0 or pin > 29:
+        _warn_error(f"{cmd}: Pin {pin} is out of range. Use GPIO 0-28 (29 is internal).")
         return False
+    
+    # Context-specific warnings
+    if cmd in ["IN", "OUT", "PWM"]:
+        if pin in [0, 1]:
+            print(f"INFO: Pin {pin} is shared with UART (TX/RX).")
+        elif pin in [8, 9]:
+            print(f"INFO: Pin {pin} is shared with I2C (SDA/SCL).")
+        elif pin in [26, 27, 28]:
+            print(f"INFO: Pin {pin} is ADC capable. Using it for {cmd} will disable ANA input.")
+    
+    if cmd == "ANA" and pin not in [26, 27, 28]:
+        _warn_error(f"ANA: Pin {pin} is not ADC capable. Use GPIO 26, 27, or 28 for analog input.")
+        return False
+        
     return True
 
 @_check_args("WAIT")
@@ -280,10 +294,7 @@ def PINS():
 def ANA(pin=_REQ, volt=False):
     """Read analog input. ADC is on pins 26-28. ANA(26) reads ADC0."""
     try:
-        # Check if pin is ADC capable (RP2040: 26, 27, 28)
-        if pin not in [26, 27, 28]:
-            _warn_error(f"ANA: Pin {pin} is not ADC capable. Use GPIO 26, 27, or 28 for analog input.")
-            return 0
+        if not _validate_gpio(pin, "ANA"): return 0
         adc = machine.ADC(pin)
         val = adc.read_u16() >> 6 # 10-bit compat
         return val / 1023.0 * 3.3 if volt else val
