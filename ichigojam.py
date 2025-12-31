@@ -8,10 +8,18 @@ import usocket as socket
 import ussl as ssl
 import _thread
 
-# --- Hardware Pin Configuration ---
-PIN_LED = 25
+import os
+
+# --- Board Detection & Default Pins ---
+_machine_name = os.uname().machine
+IS_PICO_W = "Pico W" in _machine_name
+IS_XIAO = "XIAO RP2040" in _machine_name
+
+PIN_LED = "LED" if IS_PICO_W else 25
 PIN_BUZZER = 15
 PIN_BUTTON = 14
+PIN_SCL = 9 if not IS_XIAO else 5 # XIAO D5
+PIN_SDA = 8 if not IS_XIAO else 4 # XIAO D4
 
 # --- PIO Resource Manager ---
 
@@ -125,6 +133,9 @@ _HELP_DATA = {
     "USB_KEYBOARD": "USB_KEYBOARD(text): Emulate keyboard typing.",
     "USB_MOUSE": "USB_MOUSE(x, y, click): Emulate mouse movement.",
     "USB_JOYPAD": "USB_JOYPAD(buttons, axis_x, axis_y): Emulate gamepad.",
+    "I2CW": "I2CW(addr, data): I2C Write to address.",
+    "I2CR": "I2CR(addr, size): I2C Read from address.",
+    "UART": "UART(data_or_rate): Send string or set baud rate.",
     "CLS": "CLS(): Clear screen.",
     "LC": "LC(x, y): Locate cursor.",
     "OK": "OK(): Displays 'OK'.",
@@ -468,10 +479,50 @@ def DRAW_BUFFER(data):
     """DMA buffer drawing (stub)."""
     pass
 
+# --- Communication Commands ---
+
+_i2c = None
+def _get_i2c():
+    global _i2c
+    if _i2c is None:
+        _i2c = machine.I2C(0, scl=machine.Pin(PIN_SCL), sda=machine.Pin(PIN_SDA))
+    return _i2c
+
+@_check_args("I2CW")
+def I2CW(addr=_REQ, data=_REQ):
+    """I2C Write. data can be a list of bytes or an integer."""
+    try:
+        if isinstance(data, int): data = bytes([data])
+        elif isinstance(data, list): data = bytes(data)
+        _get_i2c().writeto(addr, data)
+    except Exception as e: _warn_error(f"I2CW: {e}")
+
+@_check_args("I2CR")
+def I2CR(addr=_REQ, size=_REQ):
+    """I2C Read. Returns list of bytes."""
+    try:
+        return list(_get_i2c().readfrom(addr, size))
+    except Exception as e: 
+        _warn_error(f"I2CR: {e}")
+        return []
+
+_uart = None
+def UART(val=_REQ):
+    """UART Send or Setup. UART(baudrate) or UART(string)."""
+    global _uart
+    try:
+        if isinstance(val, int):
+            _uart = machine.UART(0, baudrate=val, tx=machine.Pin(0), rx=machine.Pin(1))
+        else:
+            if _uart is None: UART(115200) # Default setup
+            _uart.write(val)
+    except Exception as e: _warn_error(f"UART: {e}")
+
 def OK():
     """Display OK message."""
     print("OK")
 
 __all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
            "WIFI", "IOT_GET", "IOT_POST", "CORE2", "USB_KEYBOARD", "USB_MOUSE", "USB_JOYPAD",
+           "I2CW", "I2CR", "UART",
            "CLS", "LC", "SPRITE", "DRAW_BUFFER", "HELP", "PINS", "OK"]
