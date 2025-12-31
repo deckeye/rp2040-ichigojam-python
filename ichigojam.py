@@ -136,6 +136,13 @@ _HELP_DATA = {
     "I2CW": "I2CW(addr, data): I2C Write to address.",
     "I2CR": "I2CR(addr, size): I2C Read from address.",
     "UART": "UART(data_or_rate): Send string or set baud rate.",
+    "FILES": "FILES(): List files in current directory.",
+    "FREE": "FREE(): Show memory usage information.",
+    "TICK": "TICK(): Get millisecond tick count.",
+    "CLT": "CLT(): Reset tick count (pseudo).",
+    "PEEK": "PEEK(addr): Read memory (if supported) or dictionary.",
+    "POKE": "POKE(addr, val): Write memory (if supported) or dictionary.",
+    "VERSION": "VERSION(): Returns library version 2.0.",
     "CLS": "CLS(): Clear screen.",
     "LC": "LC(x, y): Locate cursor.",
     "OK": "OK(): Displays 'OK'.",
@@ -525,11 +532,51 @@ def UART(val=_REQ):
             _uart.write(val)
     except Exception as e: _warn_error(f"UART: {e}")
 
+# --- Memory and Utility Commands ---
+
+_tick_offset = 0
+def TICK():
+    """Return milliseconds since last CLT or start."""
+    return utime.ticks_ms() - _tick_offset
+
+def CLT():
+    """Clear tick count (reset offset)."""
+    global _tick_offset
+    _tick_offset = utime.ticks_ms()
+
+import gc
+def FREE():
+    """Show free and allocated memory."""
+    gc.collect()
+    free = gc.mem_free()
+    alloc = gc.mem_alloc()
+    print(f"Free: {free} bytes, Alloc: {alloc} bytes, Total: {free+alloc} bytes")
+    return free
+
+def FILES():
+    """List files on the board."""
+    for f in os.listdir():
+        print(f)
+
+# Virtual memory for PEEK/POKE if direct memory access is not used
+_virtual_mem = {}
+def PEEK(addr):
+    """Read from address (stub for dictionary-based virtual RAM)."""
+    return _virtual_mem.get(addr, 0)
+
+def POKE(addr, val):
+    """Write to address (stub for dictionary-based virtual RAM)."""
+    _virtual_mem[addr] = val & 0xFF
+
+def VERSION():
+    """Library Version."""
+    return "IchigoJam Python v2.0"
+
 def OK():
     """Display OK message."""
     print("OK")
 
 __all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
            "WIFI", "IOT_GET", "IOT_POST", "CORE2", "USB_KEYBOARD", "USB_MOUSE", "USB_JOYPAD",
-           "I2CW", "I2CR", "UART",
+           "I2CW", "I2CR", "UART", "FILES", "FREE", "TICK", "CLT", "PEEK", "POKE", "VERSION",
            "CLS", "LC", "SPRITE", "DRAW_BUFFER", "HELP", "PINS", "OK"]
