@@ -29,6 +29,51 @@ from ichigojam_experimental import *
 HELP_EXPERIMENTAL()
 ```
 
+### 液晶ディスプレイの接続と描画 (Experimental)
+外部ディスプレイを接続してスプライトを描画できます。
+
+#### 1. モノクロ OLED (SSD1306 / I2C)
+| IchigoJam P | SSD1306 | 説明 |
+|:---:|:---:|:---|
+| GP4 (SDA) | SDA | データ |
+| GP5 (SCL) | SCL | クロック |
+| 3V3 / GND | VCC/GND | 電源 |
+
+```python
+from ichigojam import *
+from ichigojam_experimental import *
+from ssd1306 import SSD1306_I2C # 別途ドライバが必要
+
+i2c = machine.I2C(0, sda=machine.Pin(4), scl=machine.Pin(5))
+oled = SSD1306_I2C(128, 64, i2c)
+
+LCD_CONFIG(oled, 128, 64, mode="MONO")
+SPRITE(1, [0x3C, 0x42, 0x95, 0xA1, 0xA1, 0x95, 0x42, 0x3C], 60, 30) # カオ
+DRAW_BUFFER()
+```
+
+#### 2. カラー LCD (ST7789 / ATM0130B3 / SPI)
+| IchigoJam P | ST7789 | 説明 |
+|:---:|:---:|:---|
+| GP18 (SCK) | SCL/SCK | クロック |
+| GP19 (TX) | SDA/MOSI | データ |
+| GP16 (DC) | DC/RS | コマンド/データ選択 |
+| GP17 (CS) | CS | チップセレクト |
+| GP20 (RES) | RES/RST | リセット |
+
+```python
+from ichigojam import *
+from ichigojam_experimental import *
+import st7789 # 別途ドライバが必要
+
+spi = machine.SPI(0, baudrate=40000000, sck=machine.Pin(18), mosi=machine.Pin(19))
+tft = st7789.ST7789(spi, 240, 240, reset=machine.Pin(20), dc=machine.Pin(16))
+
+LCD_CONFIG(tft, 240, 240, mode="COLOR")
+SPRITE(2, [0xFF]*8, 100, 100, color=COLOR_RED)
+DRAW_BUFFER()
+```
+
 ---
 
 ## ✨ 主な特徴
