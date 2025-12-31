@@ -91,39 +91,35 @@ def _pulse_program():
     mov(y, x)
     label("high")
     jmp(y_dec, "high")
+    
+    # Low time (7 times of High) - Unrolled to avoid 'z' register
     nop()           .side(0) [1]
-    mov(y, x)
-    # 7倍の長さのLowタイム (12.5% high, 87.5% low)
-    set(z, 6)
-    label("low_outer")
-    mov(y, x)
-    label("low")
-    jmp(y_dec, "low")
-    jmp(z_dec, "low_outer")
+    mov(y, x); label("l1"); jmp(y_dec, "l1")
+    mov(y, x); label("l2"); jmp(y_dec, "l2")
+    mov(y, x); label("l3"); jmp(y_dec, "l3")
+    mov(y, x); label("l4"); jmp(y_dec, "l4")
+    mov(y, x); label("l5"); jmp(y_dec, "l5")
+    mov(y, x); label("l6"); jmp(y_dec, "l6")
+    mov(y, x); label("l7"); jmp(y_dec, "l7")
     jmp("loop")
 
 @rp2.asm_pio(sideset_init=rp2.PIO.OUT_LOW)
 def _noise_program():
-    """擬似ノイズ (LFSR)"""
+    """擬似ノイズ (簡易トグル版)"""
     pull(noblock)
-    mov(x, osr)     # Frequency control
-    set(y, 1)       # Initial shift register state
+    mov(x, osr)
     label("loop")
-    # LFSR logic: bit 0 XOR bit 1
-    mov(osr, y)
-    out(null, 31)   # bit 0 to carry? No, simple random-ish jump
-    jmp(pin, "high") # This needs input pin. Let's use simpler white noise.
-    # Simplified noise: toggle based on a counter
-    label("high")
-    nop() .side(1)
-    label("low")
-    nop() .side(0)
-    # Actually, a real LFSR is complex in PIO without 32bit shifting.
-    # Let's use a simple XOR shift if possible or just fast random toggle.
-    # For now, mapping pulse with random-ish delay.
-    mov(z, x)
-    label("wait")
-    jmp(z_dec, "wait")
+    # 高速にトグルし、xの値で周波数を制御
+    nop()           .side(1)
+    mov(y, x)
+    label("n1")
+    jmp(y_dec, "n1")
+    nop()           .side(0)
+    mov(y, x)
+    label("n2")
+    # わずかに長さを変えてノイズ感を出す
+    nop()
+    jmp(y_dec, "n2")
     jmp("loop")
 
 @rp2.asm_pio(out_init=(rp2.PIO.OUT_LOW,) * 6, out_shiftdir=rp2.PIO.SHIFT_RIGHT)
@@ -157,6 +153,8 @@ def _ws_led_program():
     wrap()
 # --- 配置・定数 ---
 
+# モジュールレベルでの利便性のためのエイリアス（実体は IchigoJam クラス内に定義されることを想定）
+# しかし循環参照や初期化順序を考慮し、ここでは定数を定義し、クラスがそれを参照する形に整理。
 BAUD_115200 = 115200
 BAUD_57600  = 57600
 BAUD_38400  = 38400
@@ -192,6 +190,7 @@ class MMLPlayer:
         self._sm = None
         self._current_mml = ""
         self._loop = False
+        self._thread_lock = _thread.allocate_lock() # スレッド排他用
 
     def _get_freq(self, note: str, octave: int) -> int:
         base_map = {
@@ -226,24 +225,32 @@ class MMLPlayer:
         self._sm.put(cycle_us)
         utime.sleep_ms(duration_ms)
 
-    def stop(self):
+    def stop(self, wait: bool = False):
         self._playing = False
         if self._sm:
-            self._sm.active(0)
+            try: self._sm.active(0)
+            except: pass
+        if wait:
+            # スレッドが終了するのを待機（ロックが取得できる＝スレッド終了）
+            self._thread_lock.acquire()
+            self._thread_lock.release()
+        
+        if self._sm_id >= 0:
             self.pio_mgr.free_sm(self._sm_id)
             self._sm_id = -1
             self._sm = None
 
     def play(self, mml: str, loop: bool = False):
         """MMLを非同期（スレッド）で再生開始します。"""
-        self.stop()
+        self.stop(wait=True) # 旧スレッドの終了を確実に待つ
         self._current_mml = mml.upper().replace(" ", "")
         self._playing = True
         self._loop = loop
         _thread.start_new_thread(self._playback_loop, ())
 
     def _playback_loop(self):
-        while self._playing:
+        with self._thread_lock:
+            while self._playing:
             idx = 0
             while idx < len(self._current_mml) and self._playing:
                 c = self._current_mml[idx]
@@ -441,7 +448,7 @@ class IchigoJam:
         # PIOの全停止
         self.pio_mgr.clear_all()
         gc.collect()
-        print("IchigoJam System: Deinitialized.")
+        print("IchigoJam システム: 終了しました。")
 
     def _warn_error(self, msg: str) -> None:
         """Display error and blink LED for warning."""
@@ -587,10 +594,10 @@ class IchigoJam:
                 wlan = network.WLAN(network.STA_IF)
                 wlan.active(True)
                 wlan.connect(ssid, password)
-                print(f"Connecting to {ssid}..."); timeout = self.WIFI_TIMEOUT_SEC
+                print(f"{ssid} に接続中..."); timeout = self.WIFI_TIMEOUT_SEC
                 while not wlan.isconnected() and timeout > 0: utime.sleep(1); timeout -= 1
-                if wlan.isconnected(): print("Connected:", wlan.ifconfig()[0])
-                else: self._warn_error("WIFI: Connection timeout")
+                if wlan.isconnected(): print("接続完了:", wlan.ifconfig()[0])
+                else: self._warn_error("WIFI: 接続タイムアウト")
         except OSError as e: self._warn_error(f"WIFI Hardware: {e}")
         except Exception as e: self._warn_error(f"WIFI: {e}")
 
@@ -714,21 +721,20 @@ class IchigoJam:
         except Exception as e: self._warn_error(f"IOT: {e}"); return None
 
     def IOT_CONFIG(self, cert_validate: Optional[bool] = None, ca_file: Optional[str] = None) -> None:
-        """IoT通信のセキュリティ設定を行います。
-        cert_validate: Trueで証明書検証を有効化。
-        ca_file: 検証に使用する証明書ファイルのパスを指定。
-        """
+        """IoT通信のセキュリティ設定を行います。"""
         if cert_validate is not None:
             self.cert_validate = cert_validate
-            print(f"IoT Cert Validation: {'ENABLED' if cert_validate else 'DISABLED'}")
+            print(f"IoT 証明書検証: {'有効化' if cert_validate else '無効化'}")
         if ca_file is not None:
             self.ca_file = ca_file
-            print(f"CA File set to: {ca_file}")
+            print(f"CA証明書ファイルをセットしました: {ca_file}")
 
     def IOT_GET(self, url: str) -> Optional[str]: 
+        """HTTP GETリクエストを送信します。"""
         return self._iot_request("GET", url)
 
-    def IOT_POST(self, url: str, data: str) -> Optional[str]: 
+    def IOT_POST(self, url: str, data: Union[str, dict]) -> Optional[str]: 
+        """HTTP POSTリクエストを送信します。"""
         return self._iot_request("POST", url, data)
 
 # --- Global Instance and Wrappers ---

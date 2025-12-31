@@ -1,7 +1,10 @@
 import machine
 import utime
 import sys
-import framebuf
+try:
+    import framebuf
+except ImportError:
+    framebuf = None
 from typing import Optional, Union, Any, List, Tuple
 
 # Try to import USB HID for actual keyboard/mouse emulation
@@ -103,13 +106,28 @@ class ExperimentalFeatures:
     def SPRITE(self, id: Union[int, str], data: Optional[List[int]] = None, x: Optional[int] = None, y: Optional[int] = None, color: Optional[int] = None) -> None: 
         """スプライトの定義または移動。colorはCOLOR_WHITE等。"""
         if data is not None:
-            # Generate 8x8 pattern
+            # Generate 8x8 pattern (Mono)
             s_fb_buf = bytearray(8)
             for i, val in enumerate(data[:8]): s_fb_buf[i] = val
-            s_fb = framebuf.FrameBuffer(s_fb_buf, 8, 8, framebuf.MONO_HLSB)
+            s_fb_mono = framebuf.FrameBuffer(s_fb_buf, 8, 8, framebuf.MONO_HLSB) if framebuf else None
+            
+            # Color pattern (RGB565 cache)
+            s_fb_color = None
+            if self._mode == "COLOR" and framebuf:
+                c_buf = bytearray(8 * 8 * 2)
+                c_fb = framebuf.FrameBuffer(c_buf, 8, 8, framebuf.RGB565)
+                c_color = color if color is not None else self.COLOR_WHITE
+                # Pre-render
+                for py in range(8):
+                    row = s_fb_buf[py]
+                    for px in range(8):
+                        if (row >> (7 - px)) & 1:
+                            c_fb.pixel(px, py, c_color)
+                s_fb_color = c_fb
             
             self._sprites[id] = {
-                "fb_mono": s_fb, 
+                "fb_mono": s_fb_mono, 
+                "fb_color": s_fb_color,
                 "buf_mono": s_fb_buf, 
                 "x": x or 0, 
                 "y": y or 0, 
@@ -120,7 +138,18 @@ class ExperimentalFeatures:
             s = self._sprites[id]
             if x is not None: s["x"] = x
             if y is not None: s["y"] = y
-            if color is not None: s["color"] = color
+            if color is not None:
+                s["color"] = color
+                # Re-render color cache if color changed
+                if self._mode == "COLOR" and framebuf:
+                    c_buf = bytearray(8 * 8 * 2)
+                    c_fb = framebuf.FrameBuffer(c_buf, 8, 8, framebuf.RGB565)
+                    for py in range(8):
+                        row = s["buf_mono"][py]
+                        for px in range(8):
+                            if (row >> (7 - px)) & 1:
+                                c_fb.pixel(px, py, color)
+                    s["fb_color"] = c_fb
             print(f"Sprite {id}: Updated Pos:({s['x']},{s['y']}) Color:{s['color']}")
 
     def DRAW_BUFFER(self) -> None: 
@@ -135,15 +164,15 @@ class ExperimentalFeatures:
         # スプライトをバッファに描き込み
         for s in self._sprites.values():
             if self._mode == "COLOR":
-                # カラーモード時はモノクロパターンを指定色で描画
-                # blit(src, x, y, key, palette) を使うか、手動で描き込み。
-                # MicroPythonのblitはpaletteをサポートする場合があるが、
-                # ここでは汎用性のために 1->color, 0->transparent として描画。
-                for py in range(8):
-                    row = s["buf_mono"][py]
-                    for px in range(8):
-                        if (row >> (7 - px)) & 1:
-                            self._fb.pixel(s["x"] + px, s["y"] + py, s["color"])
+                if s["fb_color"]:
+                    self._fb.blit(s["fb_color"], s["x"], s["y"], 0) # Use transparent key 0
+                else:
+                    # Fallback (slow)
+                    for py in range(8):
+                        row = s["buf_mono"][py]
+                        for px in range(8):
+                            if (row >> (7 - px)) & 1:
+                                self._fb.pixel(s["x"] + px, s["y"] + py, s["color"])
             else:
                 self._fb.blit(s["fb_mono"], s["x"], s["y"], 0)
             
