@@ -50,147 +50,17 @@ class PIOManager:
             # Remove all programs if possible
             for prog_id, offset in list(self._programs.items()):
                 if prog_id[0] == pio_idx:
-                    # MicroPython doesn't always support easy removal, 
-                    # but we clear our tracking.
                     del self._programs[prog_id]
             # Reset state machines
             for i in range(4):
                 pio.active(i, 0)
         self._sm_used = [False] * 8
 
-# --- IchigoJam Core Class ---
-
-class IchigoJam:
-    """IchigoJam compatibility layer for RP2040."""
-    def __init__(self):
-        # Board Detection
-        self.machine_name = os.uname().machine
-        self.IS_PICO_W = "Pico W" in self.machine_name
-        self.IS_XIAO = "XIAO RP2040" in self.machine_name
-        
-        # Default Pins
-        self.PIN_LED = "LED" if self.IS_PICO_W else 25
-        self.PIN_BUZZER = 15
-        self.PIN_BUTTON = 14
-        self.PIN_SCL = 9 if not self.IS_XIAO else 5
-        self.PIN_SDA = 8 if not self.IS_XIAO else 4
-        
-        # Resource Managers
-        self.pio_mgr = PIOManager()
-        self._led_pin = None
-        self._active_pwm = {}
-        self._i2c = None
-        self._uart = None
-        self._tick_offset = 0
-        
-        # Reliability Options
-        self.cert_validate = False # Default to False for convenience in embedded
-    
-    def deinit(self):
-        """Release all resources and stop PIO state machines."""
-        for pin in list(self._active_pwm.keys()):
-            self.PWM(pin, 1000, 0)
-        self.pio_mgr.clear_all()
-        gc.collect()
-
-    def _warn_error(self, msg: str):
-        """Display error and blink LED for warning."""
-        print(f"ERROR: {msg}")
-        try:
-            if self._led_pin is None:
-                self._led_pin = machine.Pin(self.PIN_LED, machine.Pin.OUT)
-            for _ in range(6): 
-                self._led_pin.value(1); utime.sleep_ms(50)
-                self._led_pin.value(0); utime.sleep_ms(50)
-        except: pass
-
-    def _validate_gpio(self, pin: int, cmd: str) -> bool:
-        """Internal helper to validate GPIO pin."""
-        if not isinstance(pin, int) or pin < 0 or pin > 29:
-            self._warn_error(f"{cmd}: Pin {pin} is out of range.")
-            return False
-        return True
-
-    def LED(self, val: int = -1) -> None:
-        """Control onboard LED: 1=ON, 0=OFF, -1=Toggle."""
-        try:
-            if self._led_pin is None:
-                self._led_pin = machine.Pin(self.PIN_LED, machine.Pin.OUT)
-            if val == -1:
-                self._led_pin.value(not self._led_pin.value())
-            else:
-                self._led_pin.value(1 if val else 0)
-        except Exception as e:
-            self._warn_error(f"LED: {e}")
-
-    def WAIT(self, time: int, unit: str = "frame") -> None:
-        """Wait for specified time."""
-        if unit == "frame": utime.sleep_ms(int(time * 16.6))
-        elif unit == "ms": utime.sleep_ms(time)
-        else: utime.sleep(time)
-
-    def IN(self, pin: int) -> int:
-        """Read digital input."""
-        if not self._validate_gpio(pin, "IN"): return 0
-        return machine.Pin(pin, machine.Pin.IN, machine.Pin.PULL_UP).value()
-
-    def OUT(self, pin: int, val: int = None) -> None:
-        """Output to pin or bit pattern."""
-        try:
-            if val is not None:
-                if not self._validate_gpio(pin, "OUT"): return
-                if pin in self._active_pwm:
-                    sm_id, sm = self._active_pwm.pop(pin)
-                    sm.active(0); self.pio_mgr.free_sm(sm_id)
-                machine.Pin(pin, machine.Pin.OUT).value(1 if val else 0)
-            else:
-                sm_id = self.pio_mgr.get_sm()
-                if sm_id < 0: return
-                pio_pins = [machine.Pin(p, machine.Pin.OUT) for p in [1, 2, 3, 4, 5, 6]]
-                offset = self.pio_mgr.load_program(sm_id, _out_program)
-                sm = rp2.StateMachine(sm_id, _out_program, freq=1000000, out_base=pio_pins[0])
-                sm.active(1); sm.put(pin); utime.sleep_ms(1); sm.active(0)
-                self.pio_mgr.free_sm(sm_id)
-        except Exception as e: self._warn_error(f"OUT: {e}")
-
-    def BEEP(self, note: int = 440, duration: int = 10) -> None:
-        """Play sound."""
-        try:
-            freq = _NOTE_MAP.get(note, note) if isinstance(note, str) else note
-            if freq <= 0: return
-            cycle_us = 1000000 // freq
-            sm_id = self.pio_mgr.get_sm()
-            if sm_id < 0: return
-            offset = self.pio_mgr.load_program(sm_id, _beep_program)
-            sm = rp2.StateMachine(sm_id, _beep_program, freq=2000000, sideset_base=machine.Pin(self.PIN_BUZZER))
-            sm.active(1); sm.put(cycle_us); utime.sleep_ms(duration * 16); sm.active(0)
-            self.pio_mgr.free_sm(sm_id)
-        except Exception as e: self._warn_error(f"BEEP: {e}")
-
-    def ANA(self, pin: int, volt: bool = False) -> float:
-        """Read analog output."""
-        try:
-            if not self._validate_gpio(pin, "ANA"): return 0
-            adc = machine.ADC(pin)
-            val = adc.read_u16() >> 6
-            return val / 1023.0 * 3.3 if volt else val
-        except Exception as e: self._warn_error(f"ANA: {e}"); return 0
-
 # --- Internal Constants & Helpers ---
 
 class _Required:
     def __repr__(self): return "<required>"
 _REQ = _Required()
-
-def _check_args(cmd_name):
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            if _REQ in args or _REQ in kwargs.values():
-                print(f"Usage: {_HELP_DATA.get(cmd_name, 'No help available.')}")
-                return None
-            return func(*args, **kwargs)
-        return wrapper
-    return decorator
 
 @rp2.asm_pio(sideset_init=rp2.PIO.OUT_LOW)
 def _beep_program():
@@ -250,7 +120,7 @@ _HELP_DATA = {
     "IOT_GET": "IOT_GET(url): HTTP GET with HTTPS/redirect support.",
     "IOT_POST": "IOT_POST(url, data): HTTP POST with HTTPS/redirect support.",
     "CORE2": "CORE2(func): Run function on second core.",
-    "VERSION": "VERSION(): Returns library version 2.0.",
+    "VERSION": "VERSION(): Returns library version 2.1.",
     "CLS": "CLS(): Clear screen.",
     "LC": "LC(x, y): Locate cursor.",
     "OK": "OK(): Displays 'OK'.",
@@ -263,18 +133,187 @@ _HELP_DATA = {
     "FREE": "FREE(): Show memory usage information.",
     "TICK": "TICK(): Get millisecond tick count.",
     "CLT": "CLT(): Reset tick count (pseudo).",
+    "PR": "PR(*args): Alias for print(). Shortcut for IchigoJam '?' command.",
+    "P": "P(*args): Even shorter alias for print().",
 }
+
+# --- 配置・定数 ---
+
+BAUD_115200 = 115200
+BAUD_57600  = 57600
+BAUD_38400  = 38400
+BAUD_31250  = 31250
+BAUD_19200  = 19200
+BAUD_9600   = 9600
+BAUD_4800   = 4800
+BAUD_2400   = 2400
+
+NOTE_C4 = 262
+NOTE_D4 = 294
+NOTE_E4 = 330
+NOTE_F4 = 349
+NOTE_G4 = 392
+NOTE_A4 = 440
+NOTE_B4 = 494
+NOTE_C5 = 523
 
 _NOTE_MAP = {
-    "C4": 262, "C#4": 277, "D4": 294, "D#4": 311, "E4": 330, "F4": 349,
-    "F#4": 370, "G4": 392, "G#4": 415, "A4": 440, "A#4": 466, "B4": 494,
-    "C5": 523, "C#5": 554, "D5": 587, "D#5": 622, "E5": 659, "F5": 698,
+    "C4": NOTE_C4, "C#4": 277, "D4": NOTE_D4, "D#4": 311, "E4": NOTE_E4, "F4": NOTE_F4,
+    "F#4": 370, "G4": NOTE_G4, "G#4": 415, "A4": NOTE_A4, "A#4": 466, "B4": NOTE_B4,
+    "C5": NOTE_C5, "C#5": 554, "D5": 587, "D#5": 622, "E5": 659, "F5": 698,
 }
 
-# --- Error Handling ---
+# --- IchigoJam Core Class ---
+
+class IchigoJam:
+    """IchigoJam compatibility layer for RP2040."""
+    # Common GPIO Assignments
+    # --- Configuration Constants ---
+    DEFAULT_BAUD = BAUD_115200
+    WAIT_FRAME_MS = 16.6
+    ERROR_BLINK_MS = 50
+    ERROR_BLINK_COUNT = 6
+    WIFI_TIMEOUT_SEC = 30
+    
+    # UART Baud Rate Mapping (IchigoJam compatibility)
+    BAUD_MAP = {
+        1: BAUD_115200, 2: BAUD_115200, 3: BAUD_57600, 4: BAUD_38400, 
+        5: BAUD_31250, 6: BAUD_19200, 7: BAUD_9600, 8: BAUD_4800, 9: BAUD_2400
+    }
+    
+    # Default GPIO Configuration
+    PIN_BUZZER_DEFAULT = 15
+    PIN_BUTTON_DEFAULT = 14
+    PIN_LED_DEFAULT = 25
+    PIN_I2C_SDA_PICO = 8
+    PIN_I2C_SCL_PICO = 9
+    PIN_I2C_SDA_XIAO = 4
+    PIN_I2C_SCL_XIAO = 5
+
+    def __init__(self):
+        # Board Detection
+        try:
+            self.machine_name = os.uname().machine
+        except:
+            self.machine_name = "Mocked RP2040"
+            
+        self.IS_PICO_W = "Pico W" in self.machine_name
+        self.IS_XIAO = "XIAO RP2040" in self.machine_name
+        
+        # Pin Assignments
+        self.PIN_LED = "LED" if self.IS_PICO_W else self.PIN_LED_DEFAULT
+        self.PIN_BUZZER = self.PIN_BUZZER_DEFAULT
+        self.PIN_BUTTON = self.PIN_BUTTON_DEFAULT
+        
+        if self.IS_XIAO:
+            self.PIN_SDA = self.PIN_I2C_SDA_XIAO
+            self.PIN_SCL = self.PIN_I2C_SCL_XIAO
+        else:
+            self.PIN_SDA = self.PIN_I2C_SDA_PICO
+            self.PIN_SCL = self.PIN_I2C_SCL_PICO
+        
+        # Resource Managers
+        self.pio_mgr = PIOManager()
+        self._led_pin = None
+        self._active_pwm = {}
+        self._i2c = None
+        self._uart = None
+        self._tick_offset = 0
+        self.cert_validate = False
+    
+    def deinit(self):
+        """すべてのリソースを解放し、PIOをリセットします。"""
+        # PWMの停止
+        for pin in list(self._active_pwm.keys()):
+            self.PWM(pin, 1000, 0)
+        
+        # UARTの終了
+        if self._uart:
+            try: self._uart.deinit()
+            except: pass
+            self._uart = None
+            
+        # PIOの全停止
+        self.pio_mgr.clear_all()
+        gc.collect()
+        print("IchigoJam System: Deinitialized.")
+
+    def _warn_error(self, msg: str):
+        """Display error and blink LED for warning."""
+        print(f"ERROR: {msg}")
+        try:
+            if self._led_pin is None:
+                self._led_pin = machine.Pin(self.PIN_LED, machine.Pin.OUT)
+            for _ in range(self.ERROR_BLINK_COUNT): 
+                self._led_pin.value(1); utime.sleep_ms(self.ERROR_BLINK_MS)
+                self._led_pin.value(0); utime.sleep_ms(self.ERROR_BLINK_MS)
+        except: pass
+
+    def _validate_gpio(self, pin: int, cmd: str) -> bool:
+        if not isinstance(pin, int) or pin < 0 or pin > 29:
+            self._warn_error(f"{cmd}: Pin {pin} is out of range.")
+            return False
+        return True
+
+    def LED(self, val: int = -1) -> None:
+        try:
+            if self._led_pin is None:
+                self._led_pin = machine.Pin(self.PIN_LED, machine.Pin.OUT)
+            if val == -1:
+                self._led_pin.value(not self._led_pin.value())
+            else:
+                self._led_pin.value(1 if val else 0)
+        except Exception as e: self._warn_error(f"LED: {e}")
+
+    def WAIT(self, time: int, unit: str = "frame") -> None:
+        """Wait for specified time."""
+        if unit == "frame": utime.sleep_ms(int(time * self.WAIT_FRAME_MS))
+        elif unit == "ms": utime.sleep_ms(time)
+        else: utime.sleep(time)
+
+    def IN(self, pin: int) -> int:
+        if not self._validate_gpio(pin, "IN"): return 0
+        return machine.Pin(pin, machine.Pin.IN, machine.Pin.PULL_UP).value()
+
+    def OUT(self, pin: int, val: int = None) -> None:
+        try:
+            if val is not None:
+                if not self._validate_gpio(pin, "OUT"): return
+                if pin in self._active_pwm:
+                    sm_id, sm = self._active_pwm.pop(pin)
+                    sm.active(0); self.pio_mgr.free_sm(sm_id)
+                machine.Pin(pin, machine.Pin.OUT).value(1 if val else 0)
+            else:
+                sm_id = self.pio_mgr.get_sm()
+                if sm_id < 0: return
+                pio_pins = [machine.Pin(p, machine.Pin.OUT) for p in [1, 2, 3, 4, 5, 6]]
+                offset = self.pio_mgr.load_program(sm_id, _out_program)
+                sm = rp2.StateMachine(sm_id, _out_program, freq=1000000, out_base=pio_pins[0])
+                sm.active(1); sm.put(pin); utime.sleep_ms(1); sm.active(0)
+                self.pio_mgr.free_sm(sm_id)
+        except Exception as e: self._warn_error(f"OUT: {e}")
+
+    def BEEP(self, note: int = 440, duration: int = 10) -> None:
+        try:
+            freq = _NOTE_MAP.get(note, note) if isinstance(note, str) else note
+            if freq <= 0: return
+            cycle_us = 1000000 // freq
+            sm_id = self.pio_mgr.get_sm()
+            if sm_id < 0: return
+            self.pio_mgr.load_program(sm_id, _beep_program)
+            sm = rp2.StateMachine(sm_id, _beep_program, freq=2000000, sideset_base=machine.Pin(self.PIN_BUZZER))
+            sm.active(1); sm.put(cycle_us); utime.sleep_ms(duration * 16); sm.active(0)
+            self.pio_mgr.free_sm(sm_id)
+        except Exception as e: self._warn_error(f"BEEP: {e}")
+
+    def ANA(self, pin: int, volt: bool = False) -> float:
+        try:
+            if not self._validate_gpio(pin, "ANA"): return 0
+            adc = machine.ADC(pin); val = adc.read_u16() >> 6
+            return val / 1023.0 * 3.3 if volt else val
+        except Exception as e: self._warn_error(f"ANA: {e}"); return 0
 
     def PWM(self, pin: int, freq: int, duty: float) -> None:
-        """Start PIO-based PWM."""
         if not self._validate_gpio(pin, "PWM"): return
         try:
             if duty == 0:
@@ -296,7 +335,6 @@ _NOTE_MAP = {
         except Exception as e: self._warn_error(f"PWM: {e}")
 
     def WS_LED(self, data: list, pin: int = 25) -> None:
-        """Drive WS2812B LEDs."""
         try:
             sm_id = self.pio_mgr.get_sm()
             if sm_id < 0: return
@@ -310,12 +348,10 @@ _NOTE_MAP = {
         except Exception as e: self._warn_error(f"WS_LED: {e}")
 
     def RND(self, a: int, b: int = None) -> int:
-        """Random number."""
         if b is None: return random.getrandbits(16) % a if a > 0 else 0
         return random.randint(a, b - 1)
 
     def BTN(self, callback=None) -> int:
-        """Read button state."""
         try:
             btn_pin = machine.Pin(self.PIN_BUTTON, machine.Pin.IN, machine.Pin.PULL_UP)
             if callback: btn_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=lambda p: callback())
@@ -323,7 +359,6 @@ _NOTE_MAP = {
         except Exception as e: self._warn_error(f"BTN: {e}"); return 0
 
     def SAVE(self, target) -> None:
-        """Save to slot or file."""
         try:
             fn = f"slot{target}.py" if isinstance(target, int) else target
             with open(fn, "w") as f: f.write("# Saved by IchigoJam Library\n")
@@ -331,7 +366,6 @@ _NOTE_MAP = {
         except Exception as e: self._warn_error(f"SAVE: {e}")
 
     def LOAD(self, target) -> str:
-        """Load from slot or file."""
         try:
             fn = f"slot{target}.py" if isinstance(target, int) else target
             with open(fn, "r") as f: return f.read()
@@ -341,40 +375,61 @@ _NOTE_MAP = {
         """Connect to WiFi."""
         try:
             wlan = network.WLAN(network.STA_IF); wlan.active(True); wlan.connect(ssid, password)
-            print(f"Connecting to {ssid}..."); timeout = 30
+            print(f"Connecting to {ssid}..."); timeout = self.WIFI_TIMEOUT_SEC
             while not wlan.isconnected() and timeout > 0: utime.sleep(1); timeout -= 1
             if wlan.isconnected(): print("Connected:", wlan.ifconfig()[0])
             else: self._warn_error("WIFI: Connection timeout")
         except Exception as e: self._warn_error(f"WIFI: {e}")
 
     def CORE2(self, func) -> None:
-        """Run on second core."""
         try: _thread.start_new_thread(func, ())
         except Exception as e: self._warn_error(f"CORE2: {e}")
 
     def CLS(self) -> None: print("\033[2J\033[H")
     def LC(self, x: int, y: int) -> None: print(f"\033[{y};{x}H", end="")
+    def OK(self) -> None: print("OK")
+    def PR(self, *args, **kwargs) -> None: print(*args, **kwargs)
+    def P(self, *args, **kwargs) -> None: print(*args, **kwargs)
 
     def _get_i2c(self):
         if self._i2c is None: self._i2c = machine.I2C(0, scl=machine.Pin(self.PIN_SCL), sda=machine.Pin(self.PIN_SDA))
         return self._i2c
 
-    def I2CW(self, addr: int, data) -> None:
+    def I2CW(self, addr: int, data) -> int:
+        """I2C Write. Returns 1 on success, 0 on failure."""
         try:
             if isinstance(data, int): data = bytes([data])
             elif isinstance(data, list): data = bytes(data)
             self._get_i2c().writeto(addr, data)
-        except Exception as e: self._warn_error(f"I2CW: {e}")
+            return 1
+        except Exception as e:
+            self._warn_error(f"I2CW: {e}")
+            return 0
 
     def I2CR(self, addr: int, size: int) -> list:
-        try: return list(self._get_i2c().readfrom(addr, size))
-        except Exception as e: self._warn_error(f"I2CR: {e}"); return []
+        """I2C Read. Returns list of bytes, empty list on failure."""
+        try:
+            return list(self._get_i2c().readfrom(addr, size))
+        except Exception as e:
+            self._warn_error(f"I2CR: {e}")
+            return []
 
     def UART(self, val) -> None:
+        """Set baud rate or send data. val=1-9: map to baud rate, val>=300: direct baud, str/bytes: send."""
         try:
-            if isinstance(val, int): self._uart = machine.UART(0, baudrate=val, tx=machine.Pin(0), rx=machine.Pin(1))
+            if isinstance(val, int):
+                # Map 1-9 to specific baud rates, others used directly
+                baud = self.BAUD_MAP.get(val, val if val >= 300 else self.DEFAULT_BAUD)
+                if val == 0:
+                    self._uart = None # De-reference (RP2-port behavior check)
+                    return
+                # Clean re-initialization
+                if self._uart:
+                    try: self._uart.deinit()
+                    except: pass
+                self._uart = machine.UART(0, baudrate=baud, tx=machine.Pin(0), rx=machine.Pin(1))
             else:
-                if self._uart is None: self.UART(115200)
+                if self._uart is None: self.UART(self.DEFAULT_BAUD)
                 self._uart.write(val)
         except Exception as e: self._warn_error(f"UART: {e}")
 
@@ -392,8 +447,12 @@ _NOTE_MAP = {
         if cmd: print(_HELP_DATA.get(cmd.upper(), "Unknown command."))
         else: print("Available Commands: " + ", ".join(sorted(_HELP_DATA.keys())))
 
+    def PINS(self) -> None:
+        print(f"Board: {self.machine_name}")
+        print(f"I/O: LED={self.PIN_LED}, BZ={self.PIN_BUZZER}, BTN={self.PIN_BUTTON}")
+        print(f"Comm: I2C(SCL:{self.PIN_SCL}, SDA:{self.PIN_SDA}), UART(TX:0, RX:1)")
+
     def _iot_request(self, method: str, url: str, data: str = None, follow_redirects: bool = True) -> str:
-        """Internal HTTP/HTTPS request handler."""
         try:
             if "://" in url:
                 proto, rest = url.split("://", 1)
@@ -408,9 +467,7 @@ _NOTE_MAP = {
             s = socket.socket()
             s.connect(addr)
             if port == 443:
-                # Use cert_validate option
-                s = ssl.wrap_socket(s, server_hostname=host) # default wrap
-                # Note: Full cert validation requires CA bundle which is storage heavy
+                s = ssl.wrap_socket(s, server_hostname=host)
                 if self.cert_validate:
                     print("CAUTION: Certificate validation requested but CA bundle not specified.")
             
@@ -428,7 +485,6 @@ _NOTE_MAP = {
         except Exception as e: self._warn_error(f"IOT: {e}"); return None
 
     def IOT_CONFIG(self, cert_validate: bool = None) -> None:
-        """Configure IoT reliability settings."""
         if cert_validate is not None:
             self.cert_validate = cert_validate
             print(f"IoT Cert Validation: {'ENABLED' if cert_validate else 'DISABLED'}")
@@ -470,8 +526,12 @@ def PINS(): return ij.PINS()
 def VERSION(): return "IchigoJam Python v2.1 (Class-based)"
 def OK(): print("OK")
 def IOT_CONFIG(cert_validate: bool = None): return ij.IOT_CONFIG(cert_validate)
+def PR(*args, **kwargs): return ij.PR(*args, **kwargs)
+def P(*args, **kwargs): return ij.P(*args, **kwargs)
 
 __all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
            "WIFI", "IOT_GET", "IOT_POST", "IOT_CONFIG", "CORE2", 
            "I2CW", "I2CR", "UART", "FILES", "FREE", "TICK", "CLT", "VERSION",
-           "CLS", "LC", "HELP", "PINS", "OK", "ij"]
+           "CLS", "LC", "HELP", "PINS", "OK", "PR", "P", "ij",
+           "BAUD_115200", "BAUD_57600", "BAUD_38400", "BAUD_31250", "BAUD_19200", "BAUD_9600", "BAUD_4800", "BAUD_2400",
+           "NOTE_C4", "NOTE_D4", "NOTE_E4", "NOTE_F4", "NOTE_G4", "NOTE_A4", "NOTE_B4", "NOTE_C5"]
