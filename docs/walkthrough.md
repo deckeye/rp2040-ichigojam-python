@@ -48,10 +48,47 @@ All Phase 3 tests passed successfully!
 
 ---
 
-## 今後の課題 (残存Issue)
+## Phase 4: コードの堅牢化・クラスベース設計・テスト拡充
 
-- #12: HTTPS証明書検証の強化
-- #15: コア機能のユニットテストをさらに追加
-- #16: グローバル変数からクラスベース設計へのさらなる移行
-- #17: 型ヒントの追加
-- #20: エラーハンドリングの具体化
+プロジェクトの規模拡大に伴い、コードの品質と保守性を大幅に向上させました。
+
+### 実施した主な変更
+
+#### 1. クラスベース設計への完全移行 (Issue #16 完了)
+- 全てのグローバル定数、ヘルプデータ、音階マップを `IchigoJam` クラスの内部に移動。
+- `ichigojam_experimental.py` の機能も `ExperimentalFeatures` クラスとしてカプセル化し、グローバル名前空間をクリーンに保つ仕組みを導入。
+
+#### 2. 型ヒントの導入 (Issue #17 完了)
+- 両ライブラリの全ての公開関数・メソッドに Python 型ヒントを付与。
+- IDEによる入力補完や静的解析をより強力にサポートし、誤った引数渡しによるバグを未然に防止。
+
+#### 3. HTTPSセキュリティの強化 (Issue #12 完了)
+- `IOT_CONFIG` 関数を拡張し、`ca_file` (CA証明書) を指定可能に。
+- 実機環境において SSL/TLS の証明書検証を有効化するオプションを実装し、IoT通信の信頼性を向上。
+
+#### 4. テストカバレッジの大幅拡充 (Issue #15 完了)
+- `tests/test_ichigojam_core.py` を新規作成。
+- `machine`, `rp2` モジュールをモック化することで、物理的なRP2040デバイスがなくてもLED, PWM, ANA, IN, OUT などの物理I/Oロジックが正しく動作することを検証。
+
+### 検証結果
+
+```text
+Testing LED logic... OK
+Testing IN logic... OK
+Testing PWM logic... OK
+Testing ANA logic... OK
+Testing OUT logic... OK
+Testing WAIT logic... OK
+Testing BEEP logic... OK
+Core function tests passed successfully!
+```
+
+---
+
+## 現在の進捗状況 (残存Issue)
+
+| Issue | タイトル | 優先度 |
+|:---:|:---|:---|
+| #20 | エラーハンドリングの具体化 | 低 |
+
+---

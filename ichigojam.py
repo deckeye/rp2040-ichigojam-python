@@ -275,6 +275,7 @@ class IchigoJam:
                 self._led_pin.value(not self._led_pin.value())
             else:
                 self._led_pin.value(1 if val else 0)
+        except OSError as e: self._warn_error(f"LED Hardware: {e}")
         except Exception as e: self._warn_error(f"LED: {e}")
 
     def WAIT(self, time: int, unit: str = "frame") -> None:
@@ -303,6 +304,8 @@ class IchigoJam:
                 sm = rp2.StateMachine(sm_id, _out_program, freq=1000000, out_base=pio_pins[0])
                 sm.active(1); sm.put(pin); utime.sleep_ms(1); sm.active(0)
                 self.pio_mgr.free_sm(sm_id)
+        except OSError as e: self._warn_error(f"OUT Hardware: {e}")
+        except ValueError as e: self._warn_error(f"OUT Value: {e}")
         except Exception as e: self._warn_error(f"OUT: {e}")
 
     def BEEP(self, note: Union[int, str] = 440, duration: int = 10) -> None:
@@ -316,6 +319,7 @@ class IchigoJam:
             sm = rp2.StateMachine(sm_id, _beep_program, freq=2000000, sideset_base=machine.Pin(self.PIN_BUZZER))
             sm.active(1); sm.put(cycle_us); utime.sleep_ms(duration * 16); sm.active(0)
             self.pio_mgr.free_sm(sm_id)
+        except OSError as e: self._warn_error(f"BEEP Hardware: {e}")
         except Exception as e: self._warn_error(f"BEEP: {e}")
 
     def ANA(self, pin: int, volt: bool = False) -> float:
@@ -386,11 +390,15 @@ class IchigoJam:
     def WIFI(self, ssid: str, password: str) -> None:
         """Connect to WiFi."""
         try:
-            wlan = network.WLAN(network.STA_IF); wlan.active(True); wlan.connect(ssid, password)
-            print(f"Connecting to {ssid}..."); timeout = self.WIFI_TIMEOUT_SEC
-            while not wlan.isconnected() and timeout > 0: utime.sleep(1); timeout -= 1
-            if wlan.isconnected(): print("Connected:", wlan.ifconfig()[0])
-            else: self._warn_error("WIFI: Connection timeout")
+            if self.IS_PICO_W:
+                wlan = network.WLAN(network.STA_IF)
+                wlan.active(True)
+                wlan.connect(ssid, password)
+                print(f"Connecting to {ssid}..."); timeout = self.WIFI_TIMEOUT_SEC
+                while not wlan.isconnected() and timeout > 0: utime.sleep(1); timeout -= 1
+                if wlan.isconnected(): print("Connected:", wlan.ifconfig()[0])
+                else: self._warn_error("WIFI: Connection timeout")
+        except OSError as e: self._warn_error(f"WIFI Hardware: {e}")
         except Exception as e: self._warn_error(f"WIFI: {e}")
 
     def CORE2(self, func: Callable) -> None:
