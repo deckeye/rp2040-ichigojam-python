@@ -56,12 +56,44 @@ def _out_program():
     pull()
     out(pins, 6)
 
+@rp2.asm_pio(sideset_init=rp2.PIO.OUT_LOW)
+def _pwm_program():
+    pull(noblock)
+    mov(x, osr) # High duration
+    pull(noblock)
+    mov(y, osr) # Low duration
+    label("high")
+    jmp(x_dec, "high") .side(1)
+    label("low")
+    jmp(y_dec, "low") .side(0)
+
+@rp2.asm_pio(sideset_init=rp2.PIO.OUT_LOW, out_shiftdir=rp2.PIO.SHIFT_LEFT, autopull=True, pull_thresh=24)
+def _ws_led_program():
+    wrap_target()
+    out(x, 1)
+    jmp(not_x, "do_zero")
+    nop()           .side(1) [6]
+    nop()           .side(0) [1]
+    jmp("wrap_up")
+    label("do_zero")
+    nop()           .side(1) [2]
+    nop()           .side(0) [5]
+    label("wrap_up")
+    wrap()
+
 _HELP_DATA = {
     "LED": "LED(val): 1=ON, 0=OFF, -1=Toggle. Controls the onboard LED.",
     "WAIT": "WAIT(time, unit='frame'): frame(1/60s), ms, or sec.",
     "IN": "IN(pin): Returns digital value (0 or 1) of the pin.",
-    "OUT": "OUT(pin, val): Sets signal to the pin. OUT(val): Bit pattern (TBD).",
+    "OUT": "OUT(pin, val): Sets signal to the pin. OUT(val): Bit pattern.",
     "BEEP": "BEEP(note, duration): Plays a sound. 'note' can be Hz or string like 'C4'.",
+    "ANA": "ANA(pin, volt=False): Analog input (0-1023 or voltage).",
+    "PWM": "PWM(pin, freq, duty): Precise PIO-driven PWM.",
+    "WS_LED": "WS_LED(data, pin=LED_PIN): Drives WS2812B LEDs.",
+    "RND": "RND(n): Random 0 to n-1. RND(a, b): Random a to b-1.",
+    "BTN": "BTN(callback): Sets a function to run when button is pressed.",
+    "SAVE": "SAVE(target): Save to slot (0-3) or filename.",
+    "LOAD": "LOAD(target): Load from slot (0-3) or filename.",
     "OK": "OK(): Displays the signature 'OK'.",
     "HELP": "HELP(cmd): Shows this help message.",
 }
@@ -149,7 +181,69 @@ def HELP(cmd=None):
 def PINS():
     print("Default Config: LED=25, BUZZER=15, I2C=SCL:9,SDA:8")
 
+def ANA(pin, volt=False):
+    try:
+        adc = machine.ADC(pin)
+        val = adc.read_u16() >> 6 # 10-bit compat
+        return val / 1023.0 * 3.3 if volt else val
+    except Exception as e:
+        _warn_error(f"ANA: {e}")
+        return 0
+
+def PWM(pin, freq, duty):
+    try:
+        sm_id = pio_mgr.get_sm()
+        if sm_id < 0: return
+        cycle_us = 1000000 // freq
+        high_us = int(cycle_us * duty)
+        low_us = cycle_us - high_us
+        offset = pio_mgr.load_program(sm_id, _pwm_program)
+        sm = rp2.StateMachine(sm_id, _pwm_program, freq=1000000, sideset_base=machine.Pin(pin))
+        sm.active(1)
+        sm.put(high_us); sm.put(low_us)
+    except Exception as e: _warn_error(f"PWM: {e}")
+
+def WS_LED(data, pin=25):
+    try:
+        sm_id = pio_mgr.get_sm()
+        if sm_id < 0: return
+        offset = pio_mgr.load_program(sm_id, _ws_led_program)
+        sm = rp2.StateMachine(sm_id, _ws_led_program, freq=8000000, sideset_base=machine.Pin(pin))
+        sm.active(1)
+        for d in data:
+            if isinstance(d, tuple) or isinstance(d, list):
+                val = (d[1] << 16) | (d[0] << 8) | d[2]
+            else: val = d
+            sm.put(val << 8)
+        utime.sleep_ms(1); sm.active(0); pio_mgr.free_sm(sm_id)
+    except Exception as e: _warn_error(f"WS_LED: {e}")
+
+import random
+def RND(a, b=None):
+    if b is None: return random.getrandbits(16) % a if a > 0 else 0
+    return random.randint(a, b - 1)
+
+def BTN(callback=None):
+    try:
+        btn_pin = machine.Pin(14, machine.Pin.IN, machine.Pin.PULL_UP)
+        if callback: btn_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=lambda p: callback())
+        return not btn_pin.value()
+    except Exception as e: _warn_error(f"BTN: {e}"); return 0
+
+def SAVE(target):
+    try:
+        filename = f"slot{target}.py" if isinstance(target, int) else target
+        with open(filename, "w") as f: f.write("# Saved by IchigoJam Library\n")
+        print(f"Saved to {filename}")
+    except Exception as e: _warn_error(f"SAVE: {e}")
+
+def LOAD(target):
+    try:
+        filename = f"slot{target}.py" if isinstance(target, int) else target
+        with open(filename, "r") as f: print(f"Loaded {filename}"); return f.read()
+    except Exception as e: _warn_error(f"LOAD: {e}")
+
 def OK():
     print("OK")
 
-__all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "HELP", "PINS", "OK"]
+__all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", "HELP", "PINS", "OK"]
