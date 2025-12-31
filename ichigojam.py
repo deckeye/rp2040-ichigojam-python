@@ -51,6 +51,11 @@ def _beep_program():
     label("loop2")
     jmp(x_dec, "loop2") .side(0)
 
+@rp2.asm_pio(out_init=(rp2.PIO.OUT_LOW,) * 6, out_shiftdir=rp2.PIO.SHIFT_RIGHT)
+def _out_program():
+    pull()
+    out(pins, 6)
+
 _HELP_DATA = {
     "LED": "LED(val): 1=ON, 0=OFF, -1=Toggle. Controls the onboard LED.",
     "WAIT": "WAIT(time, unit='frame'): frame(1/60s), ms, or sec.",
@@ -63,7 +68,8 @@ _HELP_DATA = {
 
 _NOTE_MAP = {
     "C4": 262, "C#4": 277, "D4": 294, "D#4": 311, "E4": 330, "F4": 349,
-    "F#4": 370, "G4": 392, "G#4": 415, "A4": 440, "B4": 494,
+    "F#4": 370, "G4": 392, "G#4": 415, "A4": 440, "A#4": 466, "B4": 494,
+    "C5": 523, "C#5": 554, "D5": 587, "D#5": 622, "E5": 659, "F5": 698,
 }
 
 # --- Error Handling ---
@@ -91,9 +97,29 @@ def WAIT(time, unit="frame"):
 def IN(pin):
     return machine.Pin(pin, machine.Pin.IN, machine.Pin.PULL_UP).value()
 
+_OUT_PINS = [2, 3, 4, 5, 6, 7] # IchigoJam OUT1-6 mapping candidate
+
 def OUT(pin, val=None):
-    if val is not None:
-        machine.Pin(pin, machine.Pin.OUT).value(1 if val else 0)
+    try:
+        if val is not None:
+            # Single pin mode
+            machine.Pin(pin, machine.Pin.OUT).value(1 if val else 0)
+        else:
+            # Bit pattern mode (PIO)
+            sm_id = pio_mgr.get_sm()
+            if sm_id < 0: return
+            # Default to Pico Pins 2-7 for OUT1-6
+            pio_pins = [machine.Pin(p, machine.Pin.OUT) for p in _OUT_PINS]
+            offset = pio_mgr.load_program(sm_id, _out_program)
+            sm = rp2.StateMachine(sm_id, _out_program, freq=1000000, out_base=pio_pins[0])
+            sm.active(1)
+            sm.put(pin) # In this case pin is the pattern
+            utime.sleep_ms(1)
+            sm.active(0)
+            sm.restart() # Reset pins
+            pio_mgr.free_sm(sm_id)
+    except Exception as e:
+        _warn_error(f"OUT: {e}")
 
 def BEEP(note, duration=10):
     try:
@@ -125,3 +151,5 @@ def PINS():
 
 def OK():
     print("OK")
+
+__all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "HELP", "PINS", "OK"]
