@@ -2,6 +2,16 @@ import machine
 import rp2
 import utime
 import sys
+import random
+import network
+import usocket as socket
+import ussl as ssl
+import _thread
+
+# --- Hardware Pin Configuration ---
+PIN_LED = 25
+PIN_BUZZER = 15
+PIN_BUTTON = 14
 
 # --- PIO Resource Manager ---
 
@@ -103,13 +113,24 @@ _HELP_DATA = {
     "BEEP": "BEEP(note=440, duration=10): Plays sound. 'note' can be Hz or string like 'C4'.",
     "ANA": "ANA(pin, volt=False): Analog input (0-1023 or voltage).",
     "PWM": "PWM(pin, freq, duty): Precise PIO PWM.",
-    "WS_LED": "WS_LED(data, pin=LED_PIN): Drives WS2812B LEDs.",
+    "PWM_STOP": "PWM_STOP(pin): Stop PWM on pin.",
+    "WS_LED": "WS_LED(data, pin=25): Drives WS2812B LEDs.",
     "RND": "RND(n): Random 0 to n-1. RND(a, b): Random a to b-1.",
     "BTN": "BTN(callback=None): Returns button state or sets callback.",
     "SAVE": "SAVE(target): Save to slot (0-3) or filename.",
     "LOAD": "LOAD(target): Load from slot (0-3) or filename.",
+    "WIFI": "WIFI(ssid, password): Connect to WiFi network.",
+    "IOT_GET": "IOT_GET(url): HTTP GET with HTTPS/redirect support.",
+    "IOT_POST": "IOT_POST(url, data): HTTP POST with HTTPS/redirect support.",
+    "CORE2": "CORE2(func): Run function on second core.",
+    "USB_KEYBOARD": "USB_KEYBOARD(text): Emulate keyboard typing.",
+    "USB_MOUSE": "USB_MOUSE(x, y, click): Emulate mouse movement.",
+    "USB_JOYPAD": "USB_JOYPAD(buttons, axis_x, axis_y): Emulate gamepad.",
+    "CLS": "CLS(): Clear screen.",
+    "LC": "LC(x, y): Locate cursor.",
     "OK": "OK(): Displays 'OK'.",
     "HELP": "HELP(cmd=None): Shows help.",
+    "PINS": "PINS(): Show pin configuration.",
 }
 
 _NOTE_MAP = {
@@ -121,35 +142,53 @@ _NOTE_MAP = {
 # --- Error Handling ---
 
 def _warn_error(msg):
+    """Display error and blink LED for warning."""
     print(f"ERROR: {msg}")
-    led = machine.Pin(25, machine.Pin.OUT)
-    # Simple alert pattern
+    led = machine.Pin(PIN_LED, machine.Pin.OUT)
     for _ in range(10): 
         led.value(1); utime.sleep_ms(100)
         led.value(0); utime.sleep_ms(100)
+
+# --- Global State ---
+_led_pin = None
+_active_pwm = {}
 
 # --- Commands ---
 
 @_check_args("LED")
 def LED(val=_REQ):
+    """Control onboard LED: 1=ON, 0=OFF, -1=Toggle."""
+    global _led_pin
     try:
-        machine.Pin(25, machine.Pin.OUT).value(1 if val == 1 else 0 if val == 0 else not machine.Pin(25).value() if val == -1 else 0)
-    except: pass
+        if _led_pin is None:
+            _led_pin = machine.Pin(PIN_LED, machine.Pin.OUT)
+        if val == -1:
+            _led_pin.value(not _led_pin.value())
+        else:
+            _led_pin.value(1 if val else 0)
+    except Exception as e:
+        _warn_error(f"LED: {e}")
 
 @_check_args("WAIT")
 def WAIT(time=_REQ, unit="frame"):
-    if unit == "frame": utime.sleep_ms(int(time * 16.6))
-    elif unit == "ms": utime.sleep_ms(time)
-    else: utime.sleep(time)
+    """Wait for specified time. Units: frame (1/60s), ms, sec."""
+    if unit == "frame": 
+        utime.sleep_ms(int(time * 16.6))
+    elif unit == "ms": 
+        utime.sleep_ms(time)
+    else: 
+        utime.sleep(time)
 
 @_check_args("IN")
 def IN(pin=_REQ):
+    """Read digital input from pin."""
     return machine.Pin(pin, machine.Pin.IN, machine.Pin.PULL_UP).value()
 
 _OUT_PINS = [2, 3, 4, 5, 6, 7] # IchigoJam OUT1-6 mapping candidate
 
 @_check_args("OUT")
 def OUT(pin=_REQ, val=None):
+    """Output to pin. OUT(pin, val) for single pin, OUT(pattern) for bit pattern."""
     try:
         if val is not None:
             # Single pin mode
@@ -158,20 +197,20 @@ def OUT(pin=_REQ, val=None):
             # Bit pattern mode (PIO)
             sm_id = pio_mgr.get_sm()
             if sm_id < 0: return
-            # Default to Pico Pins 2-7 for OUT1-6
             pio_pins = [machine.Pin(p, machine.Pin.OUT) for p in _OUT_PINS]
             offset = pio_mgr.load_program(sm_id, _out_program)
             sm = rp2.StateMachine(sm_id, _out_program, freq=1000000, out_base=pio_pins[0])
             sm.active(1)
-            sm.put(pin) # In this case pin is the pattern
+            sm.put(pin)
             utime.sleep_ms(1)
             sm.active(0)
-            sm.restart() # Reset pins
+            sm.restart()
             pio_mgr.free_sm(sm_id)
     except Exception as e:
         _warn_error(f"OUT: {e}")
 
 def BEEP(note=440, duration=10):
+    """Play sound. note: Hz or string like 'C4', duration: frames."""
     try:
         freq = _NOTE_MAP.get(note, note) if isinstance(note, str) else note
         if freq <= 0: return
@@ -180,27 +219,30 @@ def BEEP(note=440, duration=10):
         if sm_id < 0: return
         
         offset = pio_mgr.load_program(sm_id, _beep_program)
-        sm = rp2.StateMachine(sm_id, _beep_program, freq=2000000, sideset_base=machine.Pin(15)) # Default buzzer pin
+        sm = rp2.StateMachine(sm_id, _beep_program, freq=2000000, sideset_base=machine.Pin(PIN_BUZZER))
         sm.active(1)
         sm.put(cycle_us)
-        utime.sleep_ms(duration * 16) # IchigoJam frame unit approx
+        utime.sleep_ms(duration * 16)
         sm.active(0)
         pio_mgr.free_sm(sm_id)
     except Exception as e:
         _warn_error(f"BEEP: {e}")
 
 def HELP(cmd=None):
+    """Show help for commands."""
     if cmd:
         print(_HELP_DATA.get(cmd.upper(), "Unknown command."))
     else:
         print("Available Commands:")
-        print(", ".join(_HELP_DATA.keys()))
+        print(", ".join(sorted(_HELP_DATA.keys())))
 
 def PINS():
-    print("Default Config: LED=25, BUZZER=15, I2C=SCL:9,SDA:8")
+    """Show default pin configuration."""
+    print(f"Default Config: LED={PIN_LED}, BUZZER={PIN_BUZZER}, BTN={PIN_BUTTON}, I2C=SCL:9,SDA:8")
 
 @_check_args("ANA")
 def ANA(pin=_REQ, volt=False):
+    """Read analog input. volt=True returns voltage (0-3.3V)."""
     try:
         adc = machine.ADC(pin)
         val = adc.read_u16() >> 6 # 10-bit compat
@@ -211,7 +253,15 @@ def ANA(pin=_REQ, volt=False):
 
 @_check_args("PWM")
 def PWM(pin=_REQ, freq=_REQ, duty=_REQ):
+    """Start PIO-based PWM on pin. duty: 0.0-1.0."""
+    global _active_pwm
     try:
+        # Stop existing PWM on this pin
+        if pin in _active_pwm:
+            old_sm_id, old_sm = _active_pwm[pin]
+            old_sm.active(0)
+            pio_mgr.free_sm(old_sm_id)
+        
         sm_id = pio_mgr.get_sm()
         if sm_id < 0: return
         cycle_us = 1000000 // freq
@@ -220,11 +270,23 @@ def PWM(pin=_REQ, freq=_REQ, duty=_REQ):
         offset = pio_mgr.load_program(sm_id, _pwm_program)
         sm = rp2.StateMachine(sm_id, _pwm_program, freq=1000000, sideset_base=machine.Pin(pin))
         sm.active(1)
-        sm.put(high_us); sm.put(low_us)
-    except Exception as e: _warn_error(f"PWM: {e}")
+        sm.put(high_us)
+        sm.put(low_us)
+        _active_pwm[pin] = (sm_id, sm)
+    except Exception as e: 
+        _warn_error(f"PWM: {e}")
+
+def PWM_STOP(pin):
+    """Stop PWM on specified pin."""
+    global _active_pwm
+    if pin in _active_pwm:
+        sm_id, sm = _active_pwm.pop(pin)
+        sm.active(0)
+        pio_mgr.free_sm(sm_id)
 
 @_check_args("WS_LED")
 def WS_LED(data=_REQ, pin=25):
+    """Drive WS2812B LEDs. data: list of (R,G,B) tuples or integers."""
     try:
         sm_id = pio_mgr.get_sm()
         if sm_id < 0: return
@@ -232,52 +294,78 @@ def WS_LED(data=_REQ, pin=25):
         sm = rp2.StateMachine(sm_id, _ws_led_program, freq=8000000, sideset_base=machine.Pin(pin))
         sm.active(1)
         for d in data:
-            if isinstance(d, tuple) or isinstance(d, list):
-                val = (d[1] << 16) | (d[0] << 8) | d[2]
-            else: val = d
+            if isinstance(d, (tuple, list)):
+                val = (d[1] << 16) | (d[0] << 8) | d[2]  # GRB order for WS2812B
+            else: 
+                val = d
             sm.put(val << 8)
-        utime.sleep_ms(1); sm.active(0); pio_mgr.free_sm(sm_id)
-    except Exception as e: _warn_error(f"WS_LED: {e}")
+        utime.sleep_ms(1)
+        sm.active(0)
+        pio_mgr.free_sm(sm_id)
+    except Exception as e: 
+        _warn_error(f"WS_LED: {e}")
 
-import random
 @_check_args("RND")
 def RND(a=_REQ, b=None):
-    if b is None: return random.getrandbits(16) % a if a > 0 else 0
+    """Random number. RND(n): 0 to n-1. RND(a, b): a to b-1."""
+    if b is None: 
+        return random.getrandbits(16) % a if a > 0 else 0
     return random.randint(a, b - 1)
 
 def BTN(callback=None):
+    """Read button state or set callback for button press."""
     try:
-        btn_pin = machine.Pin(14, machine.Pin.IN, machine.Pin.PULL_UP)
-        if callback: btn_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=lambda p: callback())
+        btn_pin = machine.Pin(PIN_BUTTON, machine.Pin.IN, machine.Pin.PULL_UP)
+        if callback: 
+            btn_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=lambda p: callback())
         return not btn_pin.value()
-    except Exception as e: _warn_error(f"BTN: {e}"); return 0
+    except Exception as e: 
+        _warn_error(f"BTN: {e}")
+        return 0
 
 @_check_args("SAVE")
 def SAVE(target=_REQ):
+    """Save to slot (0-3) or filename."""
     try:
         filename = f"slot{target}.py" if isinstance(target, int) else target
-        with open(filename, "w") as f: f.write("# Saved by IchigoJam Library\n")
+        with open(filename, "w") as f: 
+            f.write("# Saved by IchigoJam Library\n")
         print(f"Saved to {filename}")
-    except Exception as e: _warn_error(f"SAVE: {e}")
+    except Exception as e: 
+        _warn_error(f"SAVE: {e}")
 
 @_check_args("LOAD")
 def LOAD(target=_REQ):
+    """Load from slot (0-3) or filename."""
     try:
         filename = f"slot{target}.py" if isinstance(target, int) else target
-        with open(filename, "r") as f: print(f"Loaded {filename}"); return f.read()
-    except Exception as e: _warn_error(f"LOAD: {e}")
+        with open(filename, "r") as f: 
+            content = f.read()
+            print(f"Loaded {filename}")
+            return content
+    except Exception as e: 
+        _warn_error(f"LOAD: {e}")
 
 # --- v2.0+ Advanced Features ---
 
-import network
-import usocket as socket
-import ussl as ssl
-
 def _iot_request(method, url, data=None, follow_redirects=True):
+    """Internal HTTP/HTTPS request handler with redirect support."""
     try:
-        # Simple parser for URL
-        proto, _, host, path = (url.split("/") + ["", "", "", ""])[0:4]
-        path = "/" + "/".join(url.split("/")[3:])
+        # Improved URL parsing
+        if "://" in url:
+            proto, rest = url.split("://", 1)
+            proto += ":"
+            if "/" in rest:
+                host, path = rest.split("/", 1)
+                path = "/" + path
+            else:
+                host = rest
+                path = "/"
+        else:
+            proto = "http:"
+            host = url
+            path = "/"
+        
         port = 443 if proto == "https:" else 80
         
         addr = socket.getaddrinfo(host, port)[0][-1]
@@ -292,7 +380,7 @@ def _iot_request(method, url, data=None, follow_redirects=True):
         else:
             req += "\r\n"
         
-        s.write(req)
+        s.write(req.encode())
         res = s.read(4096).decode('utf-8')
         s.close()
         
@@ -311,42 +399,73 @@ def _iot_request(method, url, data=None, follow_redirects=True):
 
 @_check_args("IOT_GET")
 def IOT_GET(url=_REQ):
+    """HTTP GET with HTTPS and redirect support."""
     return _iot_request("GET", url)
 
 @_check_args("IOT_POST")
 def IOT_POST(url=_REQ, data=_REQ):
+    """HTTP POST with HTTPS and redirect support."""
     return _iot_request("POST", url, data)
 
 def WIFI(ssid=_REQ, password=_REQ):
+    """Connect to WiFi network with 30s timeout."""
     try:
         wlan = network.WLAN(network.STA_IF)
         wlan.active(True)
         wlan.connect(ssid, password)
         print(f"Connecting to {ssid}...")
-        while not wlan.isconnected(): utime.sleep(1)
-        print("Connected:", wlan.ifconfig()[0])
-    except Exception as e: _warn_error(f"WIFI: {e}")
+        timeout = 30
+        while not wlan.isconnected() and timeout > 0:
+            utime.sleep(1)
+            timeout -= 1
+        if wlan.isconnected():
+            print("Connected:", wlan.ifconfig()[0])
+        else:
+            _warn_error("WIFI: Connection timeout")
+    except Exception as e: 
+        _warn_error(f"WIFI: {e}")
 
-import _thread
 def CORE2(func=_REQ):
+    """Run function on second core (parallel execution)."""
     try:
         _thread.start_new_thread(func, ())
-    except Exception as e: _warn_error(f"CORE2: {e}")
+    except Exception as e: 
+        _warn_error(f"CORE2: {e}")
 
 # USB/Input Stubs (Require TinyUSB support in firmware)
-def USB_KEYBOARD(text): print(f"USB Keyboard Type: {text}")
-def USB_MOUSE(x, y, click=0): print(f"USB Mouse Move: {x},{y} Click:{click}")
-def USB_JOYPAD(buttons, axis_x=0, axis_y=0): print(f"USB Joypad: {buttons} Axes:{axis_x},{axis_y}")
+def USB_KEYBOARD(text): 
+    """Emulate USB keyboard typing (stub)."""
+    print(f"USB Keyboard Type: {text}")
+
+def USB_MOUSE(x, y, click=0): 
+    """Emulate USB mouse movement (stub)."""
+    print(f"USB Mouse Move: {x},{y} Click:{click}")
+
+def USB_JOYPAD(buttons, axis_x=0, axis_y=0): 
+    """Emulate USB gamepad (stub)."""
+    print(f"USB Joypad: {buttons} Axes:{axis_x},{axis_y}")
 
 # Graphics Stubs
-def CLS(): print("\033[2J\033[H")
-def LC(x, y): print(f"\033[{y};{x}H")
-def SPRITE(id, data, x, y): pass
-def DRAW_BUFFER(data): pass
+def CLS(): 
+    """Clear screen (ANSI escape code)."""
+    print("\033[2J\033[H")
+
+def LC(x, y): 
+    """Locate cursor (ANSI escape code)."""
+    print(f"\033[{y};{x}H", end="")
+
+def SPRITE(id, data, x, y): 
+    """Sprite drawing (stub)."""
+    pass
+
+def DRAW_BUFFER(data): 
+    """DMA buffer drawing (stub)."""
+    pass
 
 def OK():
+    """Display OK message."""
     print("OK")
 
-__all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
+__all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "PWM_STOP", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
            "WIFI", "IOT_GET", "IOT_POST", "CORE2", "USB_KEYBOARD", "USB_MOUSE", "USB_JOYPAD",
            "CLS", "LC", "SPRITE", "DRAW_BUFFER", "HELP", "PINS", "OK"]
