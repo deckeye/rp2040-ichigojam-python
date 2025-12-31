@@ -171,9 +171,14 @@ def LED(val=_REQ):
     global _led_pin
     try:
         if _led_pin is None:
+            # PIN_LED can be "LED" (Pico W) or integer
             _led_pin = machine.Pin(PIN_LED, machine.Pin.OUT)
         if val == -1:
-            _led_pin.value(not _led_pin.value())
+            # Handle special toggle
+            try:
+                _led_pin.value(not _led_pin.value())
+            except:
+                pass
         else:
             _led_pin.value(1 if val else 0)
     except Exception as e:
@@ -254,7 +259,9 @@ def HELP(cmd=None):
 
 def PINS():
     """Show default pin configuration."""
-    print(f"Default Config: LED={PIN_LED}, BUZZER={PIN_BUZZER}, BTN={PIN_BUTTON}, I2C=SCL:9,SDA:8")
+    print(f"Board detected: {_machine_name}")
+    print(f"Default I/O: LED={PIN_LED}, BUZZER={PIN_BUZZER}, BTN={PIN_BUTTON}")
+    print(f"Communications: I2C(SCL:{PIN_SCL}, SDA:{PIN_SDA}), UART(TX:0, RX:1)")
 
 @_check_args("ANA")
 def ANA(pin=_REQ, volt=False):
