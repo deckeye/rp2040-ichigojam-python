@@ -174,22 +174,26 @@ _active_pwm = {}
 
 @_check_args("LED")
 def LED(val=_REQ):
-    """Control onboard LED: 1=ON, 0=OFF, -1=Toggle."""
+    """Control onboard LED: 1=ON, 0=OFF, -1=Toggle. Pico W uses 'LED' internally."""
     global _led_pin
     try:
         if _led_pin is None:
-            # PIN_LED can be "LED" (Pico W) or integer
             _led_pin = machine.Pin(PIN_LED, machine.Pin.OUT)
         if val == -1:
-            # Handle special toggle
-            try:
-                _led_pin.value(not _led_pin.value())
-            except:
-                pass
+            try: _led_pin.value(not _led_pin.value())
+            except: pass
         else:
             _led_pin.value(1 if val else 0)
     except Exception as e:
         _warn_error(f"LED: {e}")
+
+def _validate_gpio(pin, cmd):
+    """Internal helper to validate GPIO pin range (0-28)."""
+    valid_range = range(0, 29)
+    if pin not in valid_range:
+        _warn_error(f"{cmd}: Pin {pin} is out of range. Use GPIO 0-28.")
+        return False
+    return True
 
 @_check_args("WAIT")
 def WAIT(time=_REQ, unit="frame"):
@@ -203,17 +207,19 @@ def WAIT(time=_REQ, unit="frame"):
 
 @_check_args("IN")
 def IN(pin=_REQ):
-    """Read digital input from pin."""
+    """Read digital input from pin (GPIO 0-28)."""
+    if not _validate_gpio(pin, "IN"): return 0
     return machine.Pin(pin, machine.Pin.IN, machine.Pin.PULL_UP).value()
 
 _OUT_PINS = [1, 2, 3, 4, 5, 6] # Align OUT1-6 with GPIO 1-6
 
 @_check_args("OUT")
 def OUT(pin=_REQ, val=None):
-    """Output to pin. OUT(pin, val) for single pin, OUT(pattern) for bit pattern."""
+    """Output to pin. OUT(pin, val) for single pin (0-28), OUT(pattern) for bit pattern."""
     global _active_pwm
     try:
         if val is not None:
+            if not _validate_gpio(pin, "OUT"): return
             # Stop PWM on this pin if active
             if pin in _active_pwm:
                 sm_id, sm = _active_pwm.pop(pin)
@@ -272,11 +278,11 @@ def PINS():
 
 @_check_args("ANA")
 def ANA(pin=_REQ, volt=False):
-    """Read analog input. volt=True returns voltage (0-3.3V). ADC is on pins 26-28 (Pico)."""
+    """Read analog input. ADC is on pins 26-28. ANA(26) reads ADC0."""
     try:
-        # Check if pin is ADC capable (RP2040: 26, 27, 28. 29 is VSYS)
-        if pin not in [26, 27, 28, 29]:
-            _warn_error(f"ANA: Pin {pin} is not ADC capable (Use 26, 27, 28)")
+        # Check if pin is ADC capable (RP2040: 26, 27, 28)
+        if pin not in [26, 27, 28]:
+            _warn_error(f"ANA: Pin {pin} is not ADC capable. Use GPIO 26, 27, or 28 for analog input.")
             return 0
         adc = machine.ADC(pin)
         val = adc.read_u16() >> 6 # 10-bit compat
@@ -287,8 +293,9 @@ def ANA(pin=_REQ, volt=False):
 
 @_check_args("PWM")
 def PWM(pin=_REQ, freq=_REQ, duty=_REQ):
-    """Start PIO-based PWM on pin. duty: 0.0-1.0. Set duty=0 to stop PWM."""
+    """Start PIO-based PWM on pin (0-28). duty: 0.0-1.0. Set duty=0 to stop."""
     global _active_pwm
+    if not _validate_gpio(pin, "PWM"): return
     try:
         # Stop PWM if duty is 0
         if duty == 0:
