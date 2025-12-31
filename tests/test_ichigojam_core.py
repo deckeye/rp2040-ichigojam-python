@@ -99,12 +99,42 @@ def test_deinit_logic():
     assert len(ij._active_pwm) == 0
     print("OK: Deinit logic verified.")
 
+def test_out_logic():
+    print("Testing OUT logic...")
+    mock_machine.Pin.reset_mock()
+    # Single Pin OUT
+    ij.OUT(2, 1)
+    mock_machine.Pin.assert_any_call(2, mock_machine.Pin.OUT)
+    
+    # Multi-pin bit pattern (OUT 1 to 6)
+    # The current implementation uses PIO for bit pattern.
+    ij.OUT(0b101010)
+    mock_rp2.StateMachine.assert_called()
+    print("OK: OUT logic verified.")
+
+def test_wait_logic():
+    print("Testing WAIT logic...")
+    mock_utime.sleep_ms.reset_mock()
+    ij.WAIT(60) # Default 1 frame = 16.6ms -> 60*16.6 ~= 996ms or 1000ms
+    mock_utime.sleep_ms.assert_called()
+    print("OK: WAIT logic verified.")
+
+def test_beep_logic():
+    print("Testing BEEP logic...")
+    # BEEP("C4", 10)
+    ij.BEEP("C4", 10)
+    mock_rp2.StateMachine.assert_called()
+    print("OK: BEEP logic verified.")
+
 if __name__ == "__main__":
     try:
         test_led_logic()
         test_in_logic()
         test_pwm_logic()
         test_ana_logic()
+        test_out_logic()
+        test_wait_logic()
+        test_beep_logic()
         test_deinit_logic()
         print("\nCore function tests passed successfully!")
     except Exception as e:

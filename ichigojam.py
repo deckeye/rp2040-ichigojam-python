@@ -103,41 +103,6 @@ def _ws_led_program():
     nop()           .side(0) [5]
     label("wrap_up")
     wrap()
-
-_HELP_DATA = {
-    "LED": "LED(val): 1=ON, 0=OFF, -1=Toggle.",
-    "WAIT": "WAIT(time, unit='frame'): frame, ms, or sec.",
-    "IN": "IN(pin): Returns digital value (0 or 1).",
-    "OUT": "OUT(pin, val): Single pin. OUT(val): Bit pattern.",
-    "BEEP": "BEEP(note=440, duration=10): Plays sound. 'note' can be Hz or string like 'C4'.",
-    "ANA": "ANA(pin, volt=False): Analog input (0-1023 or voltage).",
-    "PWM": "PWM(pin, freq, duty): Precise PIO PWM. duty=0 to stop.",
-    "WS_LED": "WS_LED(data, pin=25): Drives WS2812B LEDs.",
-    "RND": "RND(n): Random 0 to n-1. RND(a, b): Random a to b-1.",
-    "BTN": "BTN(callback=None): Returns button state or sets callback.",
-    "SAVE": "SAVE(target): Save to slot (0-3) or filename.",
-    "LOAD": "LOAD(target): Load from slot (0-3) or filename.",
-    "WIFI": "WIFI(ssid, password): Connect to WiFi network.",
-    "IOT_GET": "IOT_GET(url): HTTP GET with HTTPS/redirect support.",
-    "IOT_POST": "IOT_POST(url, data): HTTP POST with HTTPS/redirect support.",
-    "CORE2": "CORE2(func): Run function on second core.",
-    "VERSION": "VERSION(): Returns library version 2.1.",
-    "CLS": "CLS(): Clear screen.",
-    "LC": "LC(x, y): Locate cursor.",
-    "OK": "OK(): Displays 'OK'.",
-    "HELP": "HELP(cmd=None): Shows help.",
-    "PINS": "PINS(): Show pin configuration.",
-    "I2CW": "I2CW(addr, data): I2C Write to address.",
-    "I2CR": "I2CR(addr, size): I2C Read from address.",
-    "UART": "UART(data_or_rate): Send string or set baud rate.",
-    "FILES": "FILES(): List files in current directory.",
-    "FREE": "FREE(): Show memory usage information.",
-    "TICK": "TICK(): Get millisecond tick count.",
-    "CLT": "CLT(): Reset tick count (pseudo).",
-    "PR": "PR(*args): Alias for print(). Shortcut for IchigoJam '?' command.",
-    "P": "P(*args): Even shorter alias for print().",
-}
-
 # --- 配置・定数 ---
 
 BAUD_115200 = 115200
@@ -158,12 +123,6 @@ NOTE_A4 = 440
 NOTE_B4 = 494
 NOTE_C5 = 523
 
-_NOTE_MAP = {
-    "C4": NOTE_C4, "C#4": 277, "D4": NOTE_D4, "D#4": 311, "E4": NOTE_E4, "F4": NOTE_F4,
-    "F#4": 370, "G4": NOTE_G4, "G#4": 415, "A4": NOTE_A4, "A#4": 466, "B4": NOTE_B4,
-    "C5": NOTE_C5, "C#5": 554, "D5": 587, "D#5": 622, "E5": 659, "F5": 698,
-}
-
 # --- IchigoJam Core Class ---
 
 class IchigoJam:
@@ -182,6 +141,57 @@ class IchigoJam:
         5: BAUD_31250, 6: BAUD_19200, 7: BAUD_9600, 8: BAUD_4800, 9: BAUD_2400
     }
     
+    # Help Data
+    HELP_DATA = {
+        "LED": "LED(val): 1=ON, 0=OFF, -1=Toggle.",
+        "WAIT": "WAIT(time, unit='frame'): frame, ms, or sec.",
+        "IN": "IN(pin): Returns digital value (0 or 1).",
+        "OUT": "OUT(pin, val): Single pin. OUT(val): Bit pattern.",
+        "BEEP": "BEEP(note=440, duration=10): Plays sound. 'note' can be Hz or string like 'C4'.",
+        "ANA": "ANA(pin, volt=False): Analog input (0-1023 or voltage).",
+        "PWM": "PWM(pin, freq, duty): Precise PIO PWM. duty=0 to stop.",
+        "WS_LED": "WS_LED(data, pin=25): Drives WS2812B LEDs.",
+        "RND": "RND(n): Random 0 to n-1. RND(a, b): Random a to b-1.",
+        "BTN": "BTN(callback=None): Returns button state or sets callback.",
+        "SAVE": "SAVE(target): Save to slot (0-3) or filename.",
+        "LOAD": "LOAD(target): Load from slot (0-3) or filename.",
+        "WIFI": "WIFI(ssid, password): Connect to WiFi network.",
+        "IOT_GET": "IOT_GET(url): HTTP GET with HTTPS/redirect support.",
+        "IOT_POST": "IOT_POST(url, data): HTTP POST with HTTPS/redirect support.",
+        "CORE2": "CORE2(func): Run function on second core.",
+        "VERSION": "VERSION(): Returns library version 2.1.",
+        "CLS": "CLS(): Clear screen.",
+        "LC": "LC(x, y): Locate cursor.",
+        "OK": "OK(): Displays 'OK'.",
+        "HELP": "HELP(cmd=None): Shows help.",
+        "PINS": "PINS(): Show pin configuration.",
+        "I2CW": "I2CW(addr, data): I2C Write to address.",
+        "I2CR": "I2CR(addr, size): I2C Read from address.",
+        "UART": "UART(data_or_rate): Send string or set baud rate.",
+        "FILES": "FILES(): List files in current directory.",
+        "FREE": "FREE(): Show memory usage information.",
+        "TICK": "TICK(): Get millisecond tick count.",
+        "CLT": "CLT(): Reset tick count (pseudo).",
+        "PR": "PR(*args): Alias for print(). Shortcut for IchigoJam '?' command.",
+        "P": "P(*args): Even shorter alias for print().",
+    }
+
+    # Sound Constants & Map
+    NOTE_C4 = 262
+    NOTE_D4 = 294
+    NOTE_E4 = 330
+    NOTE_F4 = 349
+    NOTE_G4 = 392
+    NOTE_A4 = 440
+    NOTE_B4 = 494
+    NOTE_C5 = 523
+    
+    NOTE_MAP = {
+        "C4": NOTE_C4, "C#4": 277, "D4": NOTE_D4, "D#4": 311, "E4": NOTE_E4, "F4": NOTE_F4,
+        "F#4": 370, "G4": NOTE_G4, "G#4": 415, "A4": NOTE_A4, "A#4": 466, "B4": NOTE_B4,
+        "C5": NOTE_C5, "C#5": 554, "D5": 587, "D#5": 622, "E5": 659, "F5": 698,
+    }
+
     # Default GPIO Configuration
     PIN_BUZZER_DEFAULT = 15
     PIN_BUTTON_DEFAULT = 14
@@ -297,7 +307,7 @@ class IchigoJam:
 
     def BEEP(self, note: Union[int, str] = 440, duration: int = 10) -> None:
         try:
-            freq = _NOTE_MAP.get(note, note) if isinstance(note, str) else note
+            freq = self.NOTE_MAP.get(note, note) if isinstance(note, str) else note
             if freq <= 0: return
             cycle_us = 1000000 // freq
             sm_id = self.pio_mgr.get_sm()
@@ -445,9 +455,9 @@ class IchigoJam:
     def FILES(self) -> None:
         for f in os.listdir(): print(f)
 
-    def HELP(self, cmd: str = None) -> None:
-        if cmd: print(_HELP_DATA.get(cmd.upper(), "Unknown command."))
-        else: print("Available Commands: " + ", ".join(sorted(_HELP_DATA.keys())))
+    def HELP(self, cmd: Optional[str] = None) -> None:
+        if cmd: print(self.HELP_DATA.get(cmd.upper(), "Unknown command."))
+        else: print("Available Commands: " + ", ".join(sorted(self.HELP_DATA.keys())))
 
     def PINS(self) -> None:
         print(f"Board: {self.machine_name}")
