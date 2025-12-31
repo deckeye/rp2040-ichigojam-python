@@ -272,8 +272,12 @@ def PINS():
 
 @_check_args("ANA")
 def ANA(pin=_REQ, volt=False):
-    """Read analog input. volt=True returns voltage (0-3.3V)."""
+    """Read analog input. volt=True returns voltage (0-3.3V). ADC is on pins 26-28 (Pico)."""
     try:
+        # Check if pin is ADC capable (RP2040: 26, 27, 28. 29 is VSYS)
+        if pin not in [26, 27, 28, 29]:
+            _warn_error(f"ANA: Pin {pin} is not ADC capable (Use 26, 27, 28)")
+            return 0
         adc = machine.ADC(pin)
         val = adc.read_u16() >> 6 # 10-bit compat
         return val / 1023.0 * 3.3 if volt else val
