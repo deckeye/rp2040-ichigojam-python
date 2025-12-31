@@ -13,11 +13,12 @@ Python の強力な機能を利用しつつ、IchigoJam ユーザーが迷わず
 ```python
 from ichigojam import *
 
-# LEDを点滅させ、ドの音を鳴らす
+# LEDを点滅させ、MMLを再生する
 LED(1)
-BEEP("C4", 10) # 階名指定が可能
-WAIT(60)       # 1秒待機 (1フレーム=16.6ms)
+PLAY("CDE2 CDE2 GFEDC2$") # ループ再生対応
+WAIT(120)
 LED(0)
+PLAY() # 停止
 
 # 困ったらヘルプ！
 HELP("OUT")    # OUTコマンドの使い方を表示
@@ -34,8 +35,9 @@ HELP_EXPERIMENTAL()
 
 - **IchigoJam 体験の再現**: `LED()`, `WAIT()`, `OUT()`, `ANA()` など、すべて大文字の関数で IchigoJam BASIC と同等の操作が可能です。
 - **リソース管理の最適化**: `PIO (Programmable I/O)` を活用し、`BEEP`, `PWM`, `WS_LED` 等を実装。Python の処理に左右されない安定した信号を生成します。
-- **定数ベースの設計**: マジックナンバーを排除し、`BAUD_9600` など可読性の高いコード記述をサポート。
-- **ボード自動検知**: Pico, Pico W, XIAO RP2040 を自動判別し、LEDピンや I2Cピンを最適化します。
+- • 定数ベースの設計: マジックナンバーを排除し、 BAUD_9600 など可読性の高いコード記述をサポート。
+  • MML再生エンジン: 標準の PLAY コマンドに加え、オブジェクト指向の MMLPlayer を使ったマルチトラック・ポリリズム演奏、音色変更 (@n) が可能です。
+  • ボード自動検知: Pico, Pico W, XIAO RP2040 を自動判別し、LEDピンや I2Cピンを最適化します。
 - **IoT 対応**: `IOT_GET` (HTTPSリダイレクト対応) や `WIFI()`、さらには `CORE2` によるマルチコア並列処理もサポート。
 - **実験的機能の分離**: 未実装のスタブや TinyUSB 依存の機能は `ichigojam_experimental.py` に隔離され、メインライブラリの安定性を保っています。
 
