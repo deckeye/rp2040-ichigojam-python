@@ -22,6 +22,10 @@ LED(0)
 # 困ったらヘルプ！
 HELP("OUT")    # OUTコマンドの使い方を表示
 PINS()         # 今使っているボードのピン情報を表示
+
+# 実験的機能（スタブ）を使いたい場合
+from ichigojam_experimental import *
+HELP_EXPERIMENTAL()
 ```
 
 ---
@@ -31,7 +35,8 @@ PINS()         # 今使っているボードのピン情報を表示
 - **IchigoJam 体験の再現**: `LED()`, `WAIT()`, `OUT()`, `ANA()` など、すべて大文字の関数で IchigoJam BASIC と同等の操作が可能です。
 - **PIO (Programmable I/O) 活用**: 高精度な `BEEP`, `PWM`, `WS_LED` 等の実装。Python の処理待ちに影響されない安定した信号を生成します。
 - **親切なエラーガイド**: 非対応ピンや競合ピンを指定した際、単にエラーを出すのではなく「代わりにこのピンが使えます」といったガイドを表示します。
-- **IoT / 高度な機能**: `IOT_GET` (HTTPSリダイレクト対応), `CORE2` (マルチコア並列処理), `USB_MOUSE` 等、最新の IchigoJam P の構想を先取りしています。
+- **IoT / 高度な機能**: `IOT_GET` (HTTPSリダイレクト対応), `CORE2` (マルチコア並列処理) など、実用性の高い機能を標準搭載。
+- **実験的機能の分離**: 未実装のスタブや TinyUSB 依存の機能は `ichigojam_experimental.py` に分離し、メインライブラリの信頼性を担保しています。
 
 ---
 

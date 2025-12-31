@@ -130,9 +130,12 @@ _HELP_DATA = {
     "IOT_GET": "IOT_GET(url): HTTP GET with HTTPS/redirect support.",
     "IOT_POST": "IOT_POST(url, data): HTTP POST with HTTPS/redirect support.",
     "CORE2": "CORE2(func): Run function on second core.",
-    "USB_KEYBOARD": "USB_KEYBOARD(text): Emulate keyboard typing.",
-    "USB_MOUSE": "USB_MOUSE(x, y, click): Emulate mouse movement.",
-    "USB_JOYPAD": "USB_JOYPAD(buttons, axis_x, axis_y): Emulate gamepad.",
+    "VERSION": "VERSION(): Returns library version 2.0.",
+    "CLS": "CLS(): Clear screen.",
+    "LC": "LC(x, y): Locate cursor.",
+    "OK": "OK(): Displays 'OK'.",
+    "HELP": "HELP(cmd=None): Shows help.",
+    "PINS": "PINS(): Show pin configuration.",
     "I2CW": "I2CW(addr, data): I2C Write to address.",
     "I2CR": "I2CR(addr, size): I2C Read from address.",
     "UART": "UART(data_or_rate): Send string or set baud rate.",
@@ -140,14 +143,6 @@ _HELP_DATA = {
     "FREE": "FREE(): Show memory usage information.",
     "TICK": "TICK(): Get millisecond tick count.",
     "CLT": "CLT(): Reset tick count (pseudo).",
-    "PEEK": "PEEK(addr): Read memory (if supported) or dictionary.",
-    "POKE": "POKE(addr, val): Write memory (if supported) or dictionary.",
-    "VERSION": "VERSION(): Returns library version 2.0.",
-    "CLS": "CLS(): Clear screen.",
-    "LC": "LC(x, y): Locate cursor.",
-    "OK": "OK(): Displays 'OK'.",
-    "HELP": "HELP(cmd=None): Shows help.",
-    "PINS": "PINS(): Show pin configuration.",
 }
 
 _NOTE_MAP = {
@@ -485,18 +480,7 @@ def CORE2(func=_REQ):
     except Exception as e: 
         _warn_error(f"CORE2: {e}")
 
-# USB/Input Stubs (Require TinyUSB support in firmware)
-def USB_KEYBOARD(text): 
-    """Emulate USB keyboard typing (stub)."""
-    print(f"USB Keyboard Type: {text}")
-
-def USB_MOUSE(x, y, click=0): 
-    """Emulate USB mouse movement (stub)."""
-    print(f"USB Mouse Move: {x},{y} Click:{click}")
-
-def USB_JOYPAD(buttons, axis_x=0, axis_y=0): 
-    """Emulate USB gamepad (stub)."""
-    print(f"USB Joypad: {buttons} Axes:{axis_x},{axis_y}")
+# Graphics Commands
 
 # Graphics Stubs
 def CLS(): 
@@ -506,14 +490,6 @@ def CLS():
 def LC(x, y): 
     """Locate cursor (ANSI escape code)."""
     print(f"\033[{y};{x}H", end="")
-
-def SPRITE(id, data, x, y): 
-    """Sprite drawing (stub)."""
-    pass
-
-def DRAW_BUFFER(data): 
-    """DMA buffer drawing (stub)."""
-    pass
 
 # --- Communication Commands ---
 
@@ -580,16 +556,6 @@ def FILES():
     for f in os.listdir():
         print(f)
 
-# Virtual memory for PEEK/POKE if direct memory access is not used
-_virtual_mem = {}
-def PEEK(addr):
-    """Read from address (stub for dictionary-based virtual RAM)."""
-    return _virtual_mem.get(addr, 0)
-
-def POKE(addr, val):
-    """Write to address (stub for dictionary-based virtual RAM)."""
-    _virtual_mem[addr] = val & 0xFF
-
 def VERSION():
     """Library Version."""
     return "IchigoJam Python v2.0"
@@ -599,6 +565,6 @@ def OK():
     print("OK")
 
 __all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
-           "WIFI", "IOT_GET", "IOT_POST", "CORE2", "USB_KEYBOARD", "USB_MOUSE", "USB_JOYPAD",
-           "I2CW", "I2CR", "UART", "FILES", "FREE", "TICK", "CLT", "PEEK", "POKE", "VERSION",
-           "CLS", "LC", "SPRITE", "DRAW_BUFFER", "HELP", "PINS", "OK"]
+           "WIFI", "IOT_GET", "IOT_POST", "CORE2", 
+           "I2CW", "I2CR", "UART", "FILES", "FREE", "TICK", "CLT", "VERSION",
+           "CLS", "LC", "HELP", "PINS", "OK"]
