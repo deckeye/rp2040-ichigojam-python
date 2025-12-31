@@ -1,0 +1,13 @@
+# MicroPython
+*.pyc
+*.pyo
+*.pyd
+
+# Workspace
+.gemini/
+.idea/
+.vscode/
+
+# Local data
+task.md
+walkthrough.md
