@@ -24,12 +24,11 @@ PLAY() # 停止
 HELP("OUT")    # OUTコマンドの使い方を表示
 PINS()         # 今使っているボードのピン情報を表示
 
-# 実験的機能（スプライト、USB HID等）を使いたい場合
-from ichigojam_experimental import *
-HELP_EXPERIMENTAL()
+# グラフィックス（スプライト）やUSB HIDも標準で利用可能です
+HELP("LCD_CONFIG")
 ```
 
-### 液晶ディスプレイの接続と描画 (Experimental)
+### 液晶ディスプレイの接続と描画
 外部ディスプレイを接続してスプライトを描画できます。
 
 #### 1. モノクロ OLED (SSD1306 / I2C)
@@ -41,7 +40,6 @@ HELP_EXPERIMENTAL()
 
 ```python
 from ichigojam import *
-from ichigojam_experimental import *
 from ssd1306 import SSD1306_I2C # 別途ドライバが必要
 
 i2c = machine.I2C(0, sda=machine.Pin(4), scl=machine.Pin(5))
@@ -63,7 +61,6 @@ DRAW_BUFFER()
 
 ```python
 from ichigojam import *
-from ichigojam_experimental import *
 import st7789 # 別途ドライバが必要
 
 spi = machine.SPI(0, baudrate=40000000, sck=machine.Pin(18), mosi=machine.Pin(19))
@@ -84,7 +81,7 @@ DRAW_BUFFER()
   • MML再生エンジン: 標準の PLAY コマンドに加え、オブジェクト指向の MMLPlayer を使ったマルチトラック・ポリリズム演奏、音色変更 (@n) が可能です。
   • ボード自動検知: Pico, Pico W, XIAO RP2040 を自動判別し、LEDピンや I2Cピンを最適化します。
 - **IoT 対応**: `IOT_GET` (HTTPSリダイレクト対応) や `WIFI()`、さらには `CORE2` によるマルチコア並列処理もサポート。
-- **実験的機能の分離**: 未実装のスタブや TinyUSB 依存の機能は `ichigojam_experimental.py` に隔離され、メインライブラリの安定性を保っています。
+- **プラグイン不要の全機能統合**: USB HID エミュレーションやグラフィックスエンジンも本体に統合され、安定性と使いやすさが向上しました。
 
 ---
 
