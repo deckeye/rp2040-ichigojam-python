@@ -7,19 +7,8 @@ import network
 import usocket as socket
 import ussl as ssl
 import _thread
-
 import os
-
-# --- Board Detection & Default Pins ---
-_machine_name = os.uname().machine
-IS_PICO_W = "Pico W" in _machine_name
-IS_XIAO = "XIAO RP2040" in _machine_name
-
-PIN_LED = "LED" if IS_PICO_W else 25
-PIN_BUZZER = 15
-PIN_BUTTON = 14
-PIN_SCL = 9 if not IS_XIAO else 5 # XIAO D5
-PIN_SDA = 8 if not IS_XIAO else 4 # XIAO D4
+import gc
 
 # --- PIO Resource Manager ---
 
@@ -29,18 +18,18 @@ class PIOManager:
         self._sm_used = [False] * 8
         self._programs = {} # (pio_idx, prog_name) -> offset
         
-    def get_sm(self):
+    def get_sm(self) -> int:
         for i in range(8):
             if not self._sm_used[i]:
                 self._sm_used[i] = True
                 return i
         return -1
 
-    def free_sm(self, sm_id):
+    def free_sm(self, sm_id: int):
         if 0 <= sm_id < 8:
             self._sm_used[sm_id] = False
 
-    def load_program(self, sm_id, program):
+    def load_program(self, sm_id: int, program):
         pio_idx = 0 if sm_id < 4 else 1
         prog_id = (pio_idx, str(program))
         if prog_id in self._programs:
@@ -54,7 +43,125 @@ class PIOManager:
         except OSError:
             return -1
 
-pio_mgr = PIOManager()
+# --- IchigoJam Core Class ---
+
+class IchigoJam:
+    """IchigoJam compatibility layer for RP2040."""
+    def __init__(self):
+        # Board Detection
+        self.machine_name = os.uname().machine
+        self.IS_PICO_W = "Pico W" in self.machine_name
+        self.IS_XIAO = "XIAO RP2040" in self.machine_name
+        
+        # Default Pins
+        self.PIN_LED = "LED" if self.IS_PICO_W else 25
+        self.PIN_BUZZER = 15
+        self.PIN_BUTTON = 14
+        self.PIN_SCL = 9 if not self.IS_XIAO else 5
+        self.PIN_SDA = 8 if not self.IS_XIAO else 4
+        
+        # Resource Managers
+        self.pio_mgr = PIOManager()
+        self._led_pin = None
+        self._active_pwm = {}
+        self._i2c = None
+        self._uart = None
+        self._tick_offset = 0
+    
+    def deinit(self):
+        """Release all resources and stop PIO state machines."""
+        for pin in list(self._active_pwm.keys()):
+            self.PWM(pin, 1000, 0)
+        # Clear SMs (brute force for security)
+        for i in range(8):
+            try:
+                rp2.PIO(0 if i < 4 else 1).active(i % 4, 0)
+            except: pass
+        self.pio_mgr = PIOManager()
+        gc.collect()
+
+    def _warn_error(self, msg: str):
+        """Display error and blink LED for warning."""
+        print(f"ERROR: {msg}")
+        try:
+            if self._led_pin is None:
+                self._led_pin = machine.Pin(self.PIN_LED, machine.Pin.OUT)
+            for _ in range(6): 
+                self._led_pin.value(1); utime.sleep_ms(50)
+                self._led_pin.value(0); utime.sleep_ms(50)
+        except: pass
+
+    def _validate_gpio(self, pin: int, cmd: str) -> bool:
+        """Internal helper to validate GPIO pin."""
+        if not isinstance(pin, int) or pin < 0 or pin > 29:
+            self._warn_error(f"{cmd}: Pin {pin} is out of range.")
+            return False
+        return True
+
+    def LED(self, val: int = -1) -> None:
+        """Control onboard LED: 1=ON, 0=OFF, -1=Toggle."""
+        try:
+            if self._led_pin is None:
+                self._led_pin = machine.Pin(self.PIN_LED, machine.Pin.OUT)
+            if val == -1:
+                self._led_pin.value(not self._led_pin.value())
+            else:
+                self._led_pin.value(1 if val else 0)
+        except Exception as e:
+            self._warn_error(f"LED: {e}")
+
+    def WAIT(self, time: int, unit: str = "frame") -> None:
+        """Wait for specified time."""
+        if unit == "frame": utime.sleep_ms(int(time * 16.6))
+        elif unit == "ms": utime.sleep_ms(time)
+        else: utime.sleep(time)
+
+    def IN(self, pin: int) -> int:
+        """Read digital input."""
+        if not self._validate_gpio(pin, "IN"): return 0
+        return machine.Pin(pin, machine.Pin.IN, machine.Pin.PULL_UP).value()
+
+    def OUT(self, pin: int, val: int = None) -> None:
+        """Output to pin or bit pattern."""
+        try:
+            if val is not None:
+                if not self._validate_gpio(pin, "OUT"): return
+                if pin in self._active_pwm:
+                    sm_id, sm = self._active_pwm.pop(pin)
+                    sm.active(0); self.pio_mgr.free_sm(sm_id)
+                machine.Pin(pin, machine.Pin.OUT).value(1 if val else 0)
+            else:
+                sm_id = self.pio_mgr.get_sm()
+                if sm_id < 0: return
+                pio_pins = [machine.Pin(p, machine.Pin.OUT) for p in [1, 2, 3, 4, 5, 6]]
+                offset = self.pio_mgr.load_program(sm_id, _out_program)
+                sm = rp2.StateMachine(sm_id, _out_program, freq=1000000, out_base=pio_pins[0])
+                sm.active(1); sm.put(pin); utime.sleep_ms(1); sm.active(0)
+                self.pio_mgr.free_sm(sm_id)
+        except Exception as e: self._warn_error(f"OUT: {e}")
+
+    def BEEP(self, note: int = 440, duration: int = 10) -> None:
+        """Play sound."""
+        try:
+            freq = _NOTE_MAP.get(note, note) if isinstance(note, str) else note
+            if freq <= 0: return
+            cycle_us = 1000000 // freq
+            sm_id = self.pio_mgr.get_sm()
+            if sm_id < 0: return
+            offset = self.pio_mgr.load_program(sm_id, _beep_program)
+            sm = rp2.StateMachine(sm_id, _beep_program, freq=2000000, sideset_base=machine.Pin(self.PIN_BUZZER))
+            sm.active(1); sm.put(cycle_us); utime.sleep_ms(duration * 16); sm.active(0)
+            self.pio_mgr.free_sm(sm_id)
+        except Exception as e: self._warn_error(f"BEEP: {e}")
+
+    def ANA(self, pin: int, volt: bool = False) -> float:
+        """Read analog output."""
+        try:
+            if not self._validate_gpio(pin, "ANA"): return 0
+            adc = machine.ADC(pin)
+            val = adc.read_u16() >> 6
+            return val / 1023.0 * 3.3 if volt else val
+        except Exception as e: self._warn_error(f"ANA: {e}"); return 0
 
 # --- Internal Constants & Helpers ---
 
@@ -153,418 +260,198 @@ _NOTE_MAP = {
 
 # --- Error Handling ---
 
-def _warn_error(msg):
-    """Display error and blink LED for warning."""
-    print(f"ERROR: {msg}")
-    led = machine.Pin(PIN_LED, machine.Pin.OUT)
-    for _ in range(10): 
-        led.value(1); utime.sleep_ms(100)
-        led.value(0); utime.sleep_ms(100)
-
-# --- Global State ---
-_led_pin = None
-_active_pwm = {}
-
-# --- Commands ---
-
-@_check_args("LED")
-def LED(val=_REQ):
-    """Control onboard LED: 1=ON, 0=OFF, -1=Toggle. Pico W uses 'LED' internally."""
-    global _led_pin
-    try:
-        if _led_pin is None:
-            _led_pin = machine.Pin(PIN_LED, machine.Pin.OUT)
-        if val == -1:
-            try: _led_pin.value(not _led_pin.value())
-            except: pass
-        else:
-            _led_pin.value(1 if val else 0)
-    except Exception as e:
-        _warn_error(f"LED: {e}")
-
-def _validate_gpio(pin, cmd):
-    """Internal helper to validate GPIO pin and provide usage guidance."""
-    # 0-29 is the physical range for RP2040, but 29 is often internal
-    if not isinstance(pin, int) or pin < 0 or pin > 29:
-        _warn_error(f"{cmd}: Pin {pin} is out of range. Use GPIO 0-28 (29 is internal).")
-        return False
-    
-    # Context-specific warnings
-    if cmd in ["IN", "OUT", "PWM"]:
-        if pin in [0, 1]:
-            print(f"INFO: Pin {pin} is shared with UART (TX/RX).")
-        elif pin in [8, 9]:
-            print(f"INFO: Pin {pin} is shared with I2C (SDA/SCL).")
-        elif pin in [26, 27, 28]:
-            print(f"INFO: Pin {pin} is ADC capable. Using it for {cmd} will disable ANA input.")
-    
-    if cmd == "ANA" and pin not in [26, 27, 28]:
-        _warn_error(f"ANA: Pin {pin} is not ADC capable. Use GPIO 26, 27, or 28 for analog input.")
-        return False
-        
-    return True
-
-@_check_args("WAIT")
-def WAIT(time=_REQ, unit="frame"):
-    """Wait for specified time. Units: frame (1/60s), ms, sec."""
-    if unit == "frame": 
-        utime.sleep_ms(int(time * 16.6))
-    elif unit == "ms": 
-        utime.sleep_ms(time)
-    else: 
-        utime.sleep(time)
-
-@_check_args("IN")
-def IN(pin=_REQ):
-    """Read digital input from pin (GPIO 0-28)."""
-    if not _validate_gpio(pin, "IN"): return 0
-    return machine.Pin(pin, machine.Pin.IN, machine.Pin.PULL_UP).value()
-
-_OUT_PINS = [1, 2, 3, 4, 5, 6] # Align OUT1-6 with GPIO 1-6
-
-@_check_args("OUT")
-def OUT(pin=_REQ, val=None):
-    """Output to pin. OUT(pin, val) for single pin (0-28), OUT(pattern) for bit pattern."""
-    global _active_pwm
-    try:
-        if val is not None:
-            if not _validate_gpio(pin, "OUT"): return
-            # Stop PWM on this pin if active
-            if pin in _active_pwm:
-                sm_id, sm = _active_pwm.pop(pin)
-                sm.active(0)
-                pio_mgr.free_sm(sm_id)
-            # Single pin mode
-            machine.Pin(pin, machine.Pin.OUT).value(1 if val else 0)
-        else:
-            # Bit pattern mode (PIO)
-            sm_id = pio_mgr.get_sm()
+    def PWM(self, pin: int, freq: int, duty: float) -> None:
+        """Start PIO-based PWM."""
+        if not self._validate_gpio(pin, "PWM"): return
+        try:
+            if duty == 0:
+                if pin in self._active_pwm:
+                    sm_id, sm = self._active_pwm.pop(pin)
+                    sm.active(0); self.pio_mgr.free_sm(sm_id)
+                    machine.Pin(pin, machine.Pin.OUT).value(0)
+                return
+            if pin in self._active_pwm:
+                old_sm_id, old_sm = self._active_pwm[pin]
+                old_sm.active(0); self.pio_mgr.free_sm(old_sm_id)
+            sm_id = self.pio_mgr.get_sm()
             if sm_id < 0: return
-            pio_pins = [machine.Pin(p, machine.Pin.OUT) for p in _OUT_PINS]
-            offset = pio_mgr.load_program(sm_id, _out_program)
-            sm = rp2.StateMachine(sm_id, _out_program, freq=1000000, out_base=pio_pins[0])
+            cycle_us = 1000000 // freq
+            high_us, low_us = int(cycle_us * duty), cycle_us - int(cycle_us * duty)
+            self.pio_mgr.load_program(sm_id, _pwm_program)
+            sm = rp2.StateMachine(sm_id, _pwm_program, freq=1000000, sideset_base=machine.Pin(pin))
+            sm.active(1); sm.put(high_us); sm.put(low_us); self._active_pwm[pin] = (sm_id, sm)
+        except Exception as e: self._warn_error(f"PWM: {e}")
+
+    def WS_LED(self, data: list, pin: int = 25) -> None:
+        """Drive WS2812B LEDs."""
+        try:
+            sm_id = self.pio_mgr.get_sm()
+            if sm_id < 0: return
+            self.pio_mgr.load_program(sm_id, _ws_led_program)
+            sm = rp2.StateMachine(sm_id, _ws_led_program, freq=8000000, sideset_base=machine.Pin(pin))
             sm.active(1)
-            sm.put(pin)
-            utime.sleep_ms(1)
-            sm.active(0)
-            sm.restart()
-            pio_mgr.free_sm(sm_id)
-    except Exception as e:
-        _warn_error(f"OUT: {e}")
+            for d in data:
+                val = (d[1] << 16) | (d[0] << 8) | d[2] if isinstance(d, (tuple, list)) else d
+                sm.put(val << 8)
+            utime.sleep_ms(1); sm.active(0); self.pio_mgr.free_sm(sm_id)
+        except Exception as e: self._warn_error(f"WS_LED: {e}")
 
-def BEEP(note=440, duration=10):
-    """Play sound. note: Hz or string like 'C4', duration: frames."""
-    try:
-        freq = _NOTE_MAP.get(note, note) if isinstance(note, str) else note
-        if freq <= 0: return
-        cycle_us = 1000000 // freq
-        sm_id = pio_mgr.get_sm()
-        if sm_id < 0: return
-        
-        offset = pio_mgr.load_program(sm_id, _beep_program)
-        sm = rp2.StateMachine(sm_id, _beep_program, freq=2000000, sideset_base=machine.Pin(PIN_BUZZER))
-        sm.active(1)
-        sm.put(cycle_us)
-        utime.sleep_ms(duration * 16)
-        sm.active(0)
-        pio_mgr.free_sm(sm_id)
-    except Exception as e:
-        _warn_error(f"BEEP: {e}")
+    def RND(self, a: int, b: int = None) -> int:
+        """Random number."""
+        if b is None: return random.getrandbits(16) % a if a > 0 else 0
+        return random.randint(a, b - 1)
 
-def HELP(cmd=None):
-    """Show help for commands."""
-    if cmd:
-        print(_HELP_DATA.get(cmd.upper(), "Unknown command."))
-    else:
-        print("Available Commands:")
-        print(", ".join(sorted(_HELP_DATA.keys())))
+    def BTN(self, callback=None) -> int:
+        """Read button state."""
+        try:
+            btn_pin = machine.Pin(self.PIN_BUTTON, machine.Pin.IN, machine.Pin.PULL_UP)
+            if callback: btn_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=lambda p: callback())
+            return not btn_pin.value()
+        except Exception as e: self._warn_error(f"BTN: {e}"); return 0
 
-def PINS():
-    """Show default pin configuration."""
-    print(f"Board detected: {_machine_name}")
-    print(f"Default I/O: LED={PIN_LED}, BUZZER={PIN_BUZZER}, BTN={PIN_BUTTON}")
-    print(f"Communications: I2C(SCL:{PIN_SCL}, SDA:{PIN_SDA}), UART(TX:0, RX:1)")
+    def SAVE(self, target) -> None:
+        """Save to slot or file."""
+        try:
+            fn = f"slot{target}.py" if isinstance(target, int) else target
+            with open(fn, "w") as f: f.write("# Saved by IchigoJam Library\n")
+            print(f"Saved to {fn}")
+        except Exception as e: self._warn_error(f"SAVE: {e}")
 
-@_check_args("ANA")
-def ANA(pin=_REQ, volt=False):
-    """Read analog input. ADC is on pins 26-28. ANA(26) reads ADC0."""
-    try:
-        if not _validate_gpio(pin, "ANA"): return 0
-        adc = machine.ADC(pin)
-        val = adc.read_u16() >> 6 # 10-bit compat
-        return val / 1023.0 * 3.3 if volt else val
-    except Exception as e:
-        _warn_error(f"ANA: {e}")
-        return 0
+    def LOAD(self, target) -> str:
+        """Load from slot or file."""
+        try:
+            fn = f"slot{target}.py" if isinstance(target, int) else target
+            with open(fn, "r") as f: return f.read()
+        except Exception as e: self._warn_error(f"LOAD: {e}"); return ""
 
-@_check_args("PWM")
-def PWM(pin=_REQ, freq=_REQ, duty=_REQ):
-    """Start PIO-based PWM on pin (0-28). duty: 0.0-1.0. Set duty=0 to stop."""
-    global _active_pwm
-    if not _validate_gpio(pin, "PWM"): return
-    try:
-        # Stop PWM if duty is 0
-        if duty == 0:
-            if pin in _active_pwm:
-                sm_id, sm = _active_pwm.pop(pin)
-                sm.active(0)
-                pio_mgr.free_sm(sm_id)
-                machine.Pin(pin, machine.Pin.OUT).value(0)
-            return
-        
-        # Stop existing PWM on this pin
-        if pin in _active_pwm:
-            old_sm_id, old_sm = _active_pwm[pin]
-            old_sm.active(0)
-            pio_mgr.free_sm(old_sm_id)
-        
-        sm_id = pio_mgr.get_sm()
-        if sm_id < 0: return
-        cycle_us = 1000000 // freq
-        high_us = int(cycle_us * duty)
-        low_us = cycle_us - high_us
-        offset = pio_mgr.load_program(sm_id, _pwm_program)
-        sm = rp2.StateMachine(sm_id, _pwm_program, freq=1000000, sideset_base=machine.Pin(pin))
-        sm.active(1)
-        sm.put(high_us)
-        sm.put(low_us)
-        _active_pwm[pin] = (sm_id, sm)
-    except Exception as e: 
-        _warn_error(f"PWM: {e}")
+    def WIFI(self, ssid: str, password: str) -> None:
+        """Connect to WiFi."""
+        try:
+            wlan = network.WLAN(network.STA_IF); wlan.active(True); wlan.connect(ssid, password)
+            print(f"Connecting to {ssid}..."); timeout = 30
+            while not wlan.isconnected() and timeout > 0: utime.sleep(1); timeout -= 1
+            if wlan.isconnected(): print("Connected:", wlan.ifconfig()[0])
+            else: self._warn_error("WIFI: Connection timeout")
+        except Exception as e: self._warn_error(f"WIFI: {e}")
 
-@_check_args("WS_LED")
-def WS_LED(data=_REQ, pin=25):
-    """Drive WS2812B LEDs. data: list of (R,G,B) tuples or integers."""
-    try:
-        sm_id = pio_mgr.get_sm()
-        if sm_id < 0: return
-        offset = pio_mgr.load_program(sm_id, _ws_led_program)
-        sm = rp2.StateMachine(sm_id, _ws_led_program, freq=8000000, sideset_base=machine.Pin(pin))
-        sm.active(1)
-        for d in data:
-            if isinstance(d, (tuple, list)):
-                val = (d[1] << 16) | (d[0] << 8) | d[2]  # GRB order for WS2812B
-            else: 
-                val = d
-            sm.put(val << 8)
-        utime.sleep_ms(1)
-        sm.active(0)
-        pio_mgr.free_sm(sm_id)
-    except Exception as e: 
-        _warn_error(f"WS_LED: {e}")
+    def CORE2(self, func) -> None:
+        """Run on second core."""
+        try: _thread.start_new_thread(func, ())
+        except Exception as e: self._warn_error(f"CORE2: {e}")
 
-@_check_args("RND")
-def RND(a=_REQ, b=None):
-    """Random number. RND(n): 0 to n-1. RND(a, b): a to b-1."""
-    if b is None: 
-        return random.getrandbits(16) % a if a > 0 else 0
-    return random.randint(a, b - 1)
+    def CLS(self) -> None: print("\033[2J\033[H")
+    def LC(self, x: int, y: int) -> None: print(f"\033[{y};{x}H", end="")
 
-def BTN(callback=None):
-    """Read button state or set callback for button press."""
-    try:
-        btn_pin = machine.Pin(PIN_BUTTON, machine.Pin.IN, machine.Pin.PULL_UP)
-        if callback: 
-            btn_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=lambda p: callback())
-        return not btn_pin.value()
-    except Exception as e: 
-        _warn_error(f"BTN: {e}")
-        return 0
+    def _get_i2c(self):
+        if self._i2c is None: self._i2c = machine.I2C(0, scl=machine.Pin(self.PIN_SCL), sda=machine.Pin(self.PIN_SDA))
+        return self._i2c
 
-@_check_args("SAVE")
-def SAVE(target=_REQ):
-    """Save to slot (0-3) or filename."""
-    try:
-        filename = f"slot{target}.py" if isinstance(target, int) else target
-        with open(filename, "w") as f: 
-            f.write("# Saved by IchigoJam Library\n")
-        print(f"Saved to {filename}")
-    except Exception as e: 
-        _warn_error(f"SAVE: {e}")
+    def I2CW(self, addr: int, data) -> None:
+        try:
+            if isinstance(data, int): data = bytes([data])
+            elif isinstance(data, list): data = bytes(data)
+            self._get_i2c().writeto(addr, data)
+        except Exception as e: self._warn_error(f"I2CW: {e}")
 
-@_check_args("LOAD")
-def LOAD(target=_REQ):
-    """Load from slot (0-3) or filename."""
-    try:
-        filename = f"slot{target}.py" if isinstance(target, int) else target
-        with open(filename, "r") as f: 
-            content = f.read()
-            print(f"Loaded {filename}")
-            return content
-    except Exception as e: 
-        _warn_error(f"LOAD: {e}")
+    def I2CR(self, addr: int, size: int) -> list:
+        try: return list(self._get_i2c().readfrom(addr, size))
+        except Exception as e: self._warn_error(f"I2CR: {e}"); return []
 
-# --- v2.0+ Advanced Features ---
-
-def _iot_request(method, url, data=None, follow_redirects=True):
-    """Internal HTTP/HTTPS request handler with redirect support."""
-    try:
-        # Improved URL parsing
-        if "://" in url:
-            proto, rest = url.split("://", 1)
-            proto += ":"
-            if "/" in rest:
-                host, path = rest.split("/", 1)
-                path = "/" + path
+    def UART(self, val) -> None:
+        try:
+            if isinstance(val, int): self._uart = machine.UART(0, baudrate=val, tx=machine.Pin(0), rx=machine.Pin(1))
             else:
-                host = rest
-                path = "/"
-        else:
-            proto = "http:"
-            host = url
-            path = "/"
-        
-        port = 443 if proto == "https:" else 80
-        
-        addr = socket.getaddrinfo(host, port)[0][-1]
-        s = socket.socket()
-        s.connect(addr)
-        if port == 443:
-            s = ssl.wrap_socket(s, server_hostname=host)
-        
-        req = f"{method} {path} HTTP/1.0\r\nHost: {host}\r\n"
-        if data:
-            req += f"Content-Length: {len(data)}\r\n\r\n{data}"
-        else:
-            req += "\r\n"
-        
-        s.write(req.encode())
-        res = s.read(4096).decode('utf-8')
-        s.close()
-        
-        # Handle Redirects (301, 302, 307)
-        if follow_redirects and ("HTTP/1.1 30" in res or "HTTP/1.0 30" in res):
-            for line in res.split("\r\n"):
-                if line.startswith("Location:"):
-                    new_url = line.split(":", 1)[1].strip()
-                    return _iot_request(method, new_url, data, follow_redirects)
-        
-        # Return body
-        return res.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in res else res
-    except Exception as e:
-        _warn_error(f"IOT: {e}")
-        return None
+                if self._uart is None: self.UART(115200)
+                self._uart.write(val)
+        except Exception as e: self._warn_error(f"UART: {e}")
 
-@_check_args("IOT_GET")
-def IOT_GET(url=_REQ):
-    """HTTP GET with HTTPS and redirect support."""
-    return _iot_request("GET", url)
+    def TICK(self) -> int: return utime.ticks_ms() - self._tick_offset
+    def CLT(self) -> None: self._tick_offset = utime.ticks_ms()
+    
+    def FREE(self) -> int:
+        gc.collect(); f, a = gc.mem_free(), gc.mem_alloc()
+        print(f"Free: {f}, Alloc: {a}, Total: {f+a}"); return f
 
-@_check_args("IOT_POST")
-def IOT_POST(url=_REQ, data=_REQ):
-    """HTTP POST with HTTPS and redirect support."""
-    return _iot_request("POST", url, data)
+    def FILES(self) -> None:
+        for f in os.listdir(): print(f)
 
-def WIFI(ssid=_REQ, password=_REQ):
-    """Connect to WiFi network with 30s timeout."""
-    try:
-        wlan = network.WLAN(network.STA_IF)
-        wlan.active(True)
-        wlan.connect(ssid, password)
-        print(f"Connecting to {ssid}...")
-        timeout = 30
-        while not wlan.isconnected() and timeout > 0:
-            utime.sleep(1)
-            timeout -= 1
-        if wlan.isconnected():
-            print("Connected:", wlan.ifconfig()[0])
-        else:
-            _warn_error("WIFI: Connection timeout")
-    except Exception as e: 
-        _warn_error(f"WIFI: {e}")
+    def HELP(self, cmd: str = None) -> None:
+        if cmd: print(_HELP_DATA.get(cmd.upper(), "Unknown command."))
+        else: print("Available Commands: " + ", ".join(sorted(_HELP_DATA.keys())))
 
-def CORE2(func=_REQ):
-    """Run function on second core (parallel execution)."""
-    try:
-        _thread.start_new_thread(func, ())
-    except Exception as e: 
-        _warn_error(f"CORE2: {e}")
+    def PINS(self) -> None:
+        print(f"Board: {self.machine_name}")
+        print(f"I/O: LED={self.PIN_LED}, BZ={self.PIN_BUZZER}, BTN={self.PIN_BUTTON}")
+        print(f"Comm: I2C(SCL:{self.PIN_SCL}, SDA:{self.PIN_SDA}), UART(TX:0, RX:1)")
 
-# Graphics Commands
+# --- Global Instance and Wrappers ---
 
-# Graphics Stubs
-def CLS(): 
-    """Clear screen (ANSI escape code)."""
-    print("\033[2J\033[H")
+ij = IchigoJam()
 
-def LC(x, y): 
-    """Locate cursor (ANSI escape code)."""
-    print(f"\033[{y};{x}H", end="")
+def LED(val: int = -1): return ij.LED(val)
+def WAIT(time: int, unit: str = "frame"): return ij.WAIT(time, unit)
+def IN(pin: int): return ij.IN(pin)
+def OUT(pin: int, val: int = None): return ij.OUT(pin, val)
+def BEEP(note: int = 440, duration: int = 10): return ij.BEEP(note, duration)
+def ANA(pin: int, volt: bool = False): return ij.ANA(pin, volt)
+def PWM(pin: int, freq: int, duty: float): return ij.PWM(pin, freq, duty)
+def WS_LED(data: list, pin: int = 25): return ij.WS_LED(data, pin)
+def RND(a: int, b: int = None): return ij.RND(a, b)
+def BTN(callback=None): return ij.BTN(callback)
+def SAVE(target): return ij.SAVE(target)
+def LOAD(target): return ij.LOAD(target)
+def WIFI(ssid: str, password: str): return ij.WIFI(ssid, password)
+def IOT_GET(url: str): return ij.IOT_GET(url) # Placeholder, implement IOT logic in class if needed
+def IOT_POST(url: str, data: str): return ij.IOT_POST(url, data) # Placeholder
+def CORE2(func): return ij.CORE2(func)
+def CLS(): return ij.CLS()
+def LC(x: int, y: int): return ij.LC(x, y)
+def I2CW(addr: int, data): return ij.I2CW(addr, data)
+def I2CR(addr: int, size: int): return ij.I2CR(addr, size)
+def UART(val): return ij.UART(val)
+def TICK(): return ij.TICK()
+def CLT(): return ij.CLT()
+def FREE(): return ij.FREE()
+def FILES(): return ij.FILES()
+def HELP(cmd: str = None): return ij.HELP(cmd)
+def PINS(): return ij.PINS()
+def VERSION(): return "IchigoJam Python v2.1 (Class-based)"
+def OK(): print("OK")
 
-# --- Communication Commands ---
+    def _iot_request(self, method: str, url: str, data: str = None, follow_redirects: bool = True) -> str:
+        """Internal HTTP/HTTPS request handler."""
+        try:
+            if "://" in url:
+                proto, rest = url.split("://", 1)
+                proto += ":"
+                host, path = rest.split("/", 1) if "/" in rest else (rest, "/")
+                if not path.startswith("/"): path = "/" + path
+            else:
+                proto, host, path = "http:", url, "/"
+            
+            port = 443 if proto == "https:" else 80
+            addr = socket.getaddrinfo(host, port)[0][-1]
+            s = socket.socket()
+            s.connect(addr)
+            if port == 443: s = ssl.wrap_socket(s, server_hostname=host)
+            
+            req = f"{method} {path} HTTP/1.0\r\nHost: {host}\r\n"
+            if data: req += f"Content-Length: {len(data)}\r\n\r\n{data}"
+            else: req += "\r\n"
+            
+            s.write(req.encode()); res = s.read(4096).decode('utf-8'); s.close()
+            
+            if follow_redirects and ("HTTP/1.1 30" in res or "HTTP/1.0 30" in res):
+                for line in res.split("\r\n"):
+                    if line.startswith("Location:"):
+                        return self._iot_request(method, line.split(":", 1)[1].strip(), data, True)
+            return res.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in res else res
+        except Exception as e: self._warn_error(f"IOT: {e}"); return None
 
-_i2c = None
-def _get_i2c():
-    global _i2c
-    if _i2c is None:
-        _i2c = machine.I2C(0, scl=machine.Pin(PIN_SCL), sda=machine.Pin(PIN_SDA))
-    return _i2c
-
-@_check_args("I2CW")
-def I2CW(addr=_REQ, data=_REQ):
-    """I2C Write. data can be a list of bytes or an integer."""
-    try:
-        if isinstance(data, int): data = bytes([data])
-        elif isinstance(data, list): data = bytes(data)
-        _get_i2c().writeto(addr, data)
-    except Exception as e: _warn_error(f"I2CW: {e}")
-
-@_check_args("I2CR")
-def I2CR(addr=_REQ, size=_REQ):
-    """I2C Read. Returns list of bytes."""
-    try:
-        return list(_get_i2c().readfrom(addr, size))
-    except Exception as e: 
-        _warn_error(f"I2CR: {e}")
-        return []
-
-_uart = None
-def UART(val=_REQ):
-    """UART Send or Setup. UART(baudrate) or UART(string)."""
-    global _uart
-    try:
-        if isinstance(val, int):
-            _uart = machine.UART(0, baudrate=val, tx=machine.Pin(0), rx=machine.Pin(1))
-        else:
-            if _uart is None: UART(115200) # Default setup
-            _uart.write(val)
-    except Exception as e: _warn_error(f"UART: {e}")
-
-# --- Memory and Utility Commands ---
-
-_tick_offset = 0
-def TICK():
-    """Return milliseconds since last CLT or start."""
-    return utime.ticks_ms() - _tick_offset
-
-def CLT():
-    """Clear tick count (reset offset)."""
-    global _tick_offset
-    _tick_offset = utime.ticks_ms()
-
-import gc
-def FREE():
-    """Show free and allocated memory."""
-    gc.collect()
-    free = gc.mem_free()
-    alloc = gc.mem_alloc()
-    print(f"Free: {free} bytes, Alloc: {alloc} bytes, Total: {free+alloc} bytes")
-    return free
-
-def FILES():
-    """List files on the board."""
-    for f in os.listdir():
-        print(f)
-
-def VERSION():
-    """Library Version."""
-    return "IchigoJam Python v2.0"
-
-def OK():
-    """Display OK message."""
-    print("OK")
+    def IOT_GET(self, url: str) -> str: return self._iot_request("GET", url)
+    def IOT_POST(self, url: str, data: str) -> str: return self._iot_request("POST", url, data)
 
 __all__ = ["LED", "WAIT", "IN", "OUT", "BEEP", "ANA", "PWM", "WS_LED", "RND", "BTN", "SAVE", "LOAD", 
            "WIFI", "IOT_GET", "IOT_POST", "CORE2", 
            "I2CW", "I2CR", "UART", "FILES", "FREE", "TICK", "CLT", "VERSION",
-           "CLS", "LC", "HELP", "PINS", "OK"]
+           "CLS", "LC", "HELP", "PINS", "OK", "ij"]
