@@ -14,10 +14,10 @@ from typing import Optional, Union, Any, List, Tuple, Callable
 # --- PIO Resource Manager ---
 
 class PIOManager:
-    """PIO state machine and instruction memory manager."""
+    """PIO状態マシンと命令メモリのマネージャー。"""
     def __init__(self):
         self._sm_used = [False] * 8
-        self._programs = {} # (pio_idx, prog_name) -> offset
+        self._programs = {} # (pio_idx, prog_name) -> offset (オフセット)
         
     def get_sm(self) -> int:
         for i in range(8):
@@ -45,25 +45,25 @@ class PIOManager:
             return -1
 
     def clear_all(self):
-        """Reset both PIO blocks and clear program cache."""
+        """両方のPIOブロックをリセットし、プログラムキャッシュをクリアします。"""
         for pio_idx in [0, 1]:
             pio = rp2.PIO(pio_idx)
             # Remove all programs if possible
             for prog_id, offset in list(self._programs.items()):
                 if prog_id[0] == pio_idx:
                     del self._programs[prog_id]
-            # Reset state machines
+            # 状態マシンのリセット
             for i in range(4):
                 pio.active(i, 0)
         self._sm_used = [False] * 8
 
-# --- Internal Constants & Helpers ---
+# --- 内部定数とヘルパー ---
 
 class _Required:
     def __repr__(self): return "<required>"
 _REQ = _Required()
 
-# --- PIO Programs for Sound ---
+# --- 音声用のPIOプログラム ---
 
 @rp2.asm_pio(sideset_init=rp2.PIO.OUT_LOW)
 def _beep_program():
@@ -92,7 +92,7 @@ def _pulse_program():
     label("high")
     jmp(y_dec, "high")
     
-    # Low time (7 times of High) - Unrolled to avoid 'z' register
+    # Lowタイム (Highの7倍) - 'z'レジスタを避けるためにアンロール
     nop()           .side(0) [1]
     mov(y, x); label("l1"); jmp(y_dec, "l1")
     mov(y, x); label("l2"); jmp(y_dec, "l2")
@@ -130,9 +130,9 @@ def _out_program():
 @rp2.asm_pio(sideset_init=rp2.PIO.OUT_LOW)
 def _pwm_program():
     pull(noblock)
-    mov(x, osr) # High duration
+    mov(x, osr) # High期間
     pull(noblock)
-    mov(y, osr) # Low duration
+    mov(y, osr) # Low期間
     label("high")
     jmp(x_dec, "high") .side(1)
     label("low")
@@ -184,7 +184,7 @@ class MMLPlayer:
         self.tempo = 120
         self.default_len = 4
         self.octave = 3
-        self.instrument = 0 # 0: Square, 1: Pulse, 2: Noise
+        self.instrument = 0 # 0: 矩形波, 1: パルス波, 2: ノイズ
         self._playing = False
         self._sm_id = -1
         self._sm = None
@@ -200,7 +200,7 @@ class MMLPlayer:
         }
         if note not in base_map: return 0
         freq = base_map[note]
-        # IchigoJam octave 3 is base. Multiplier is 2^(octave-3)
+        # IchigoJamのオクターブ3が基準。倍数は 2^(octave-3)
         return int(freq * (2 ** (octave - 3)))
 
     def _play_note(self, freq: int, duration_ms: int):
@@ -212,13 +212,13 @@ class MMLPlayer:
         cycle_us = 1000000 // freq
         if self._sm_id < 0:
             self._sm_id = self.pio_mgr.get_sm()
-            if self._sm_id < 0: return # No SM available
+            if self._sm_id < 0: return # 利用可能なSMがない
             
-        # Instrument mapping
+        # 楽器のマッピング
         prog = _beep_program if self.instrument == 0 else \
                _pulse_program if self.instrument == 1 else _noise_program
         
-        # Load and start
+        # ロードと開始
         self.pio_mgr.load_program(self._sm_id, prog)
         self._sm = rp2.StateMachine(self._sm_id, prog, freq=2000000, sideset_base=machine.Pin(self.pin))
         self._sm.active(1)
@@ -257,30 +257,30 @@ class MMLPlayer:
                 idx += 1
                 
                 if 'A' <= c <= 'G' or c == 'R':
-                    # Note or Rest
+                    # 音符または休符
                     note = c
                     if idx < len(self._current_mml) and (self._current_mml[idx] in "+#-"):
                         if self._current_mml[idx] in "+#": note += "#"
-                        else: note += "-" # actually IchigoJam uses '+' for sharp
+                        else: note += "-" # IchigoJamではシャープに '+' を使用
                         idx += 1
                     
-                    # Length
+                    # 長さ
                     num = ""
                     while idx < len(self._current_mml) and self._current_mml[idx].isdigit():
                         num += self._current_mml[idx]
                         idx += 1
                     length = int(num) if num else self.default_len
                     
-                    # Dot
+                    # 付点
                     duration_factor = 1.0
                     if idx < len(self._current_mml) and self._current_mml[idx] == '.':
                         duration_factor = 1.5
                         idx += 1
                     
-                    # Calculate duration
-                    # tempo 120 -> 1 min (60000ms) has 120 quarter notes.
-                    # duration of 1/4 note = 60000 / 120 = 500ms
-                    # L4 duration = (60000 * 4) / (tempo * length)
+                    # 長さの計算
+                    # テンポ 120 -> 1分 (60000ms) に120個の四分音符。
+                    # 四分音符の長さ = 60000 / 120 = 500ms
+                    # L4の長さ = (240000 * duration_factor) / (tempo * length)
                     duration_ms = int((240000 * duration_factor) / (self.tempo * length))
                     
                     if note == 'R':
@@ -315,31 +315,31 @@ class MMLPlayer:
                         idx += 1
                     if num: self.instrument = int(num)
                 elif c == '$':
-                    if not self._loop: break # End if not looping
-                elif c == '\'': break # End of music
+                    if not self._loop: break # ループ指定がない場合は終了
+                elif c == '\'': break # 演奏終了
             
             if not self._loop: break
         self.stop()
 
-# --- IchigoJam Core Class ---
+# --- IchigoJam コアクラス ---
 
 class IchigoJam:
-    """IchigoJam compatibility layer for RP2040."""
-    # Common GPIO Assignments
-    # --- Configuration Constants ---
+    """RP2040用のIchigoJam互換レイヤー。"""
+    # 一般的なGPIO割り当て
+    # --- 設定定数 ---
     DEFAULT_BAUD = BAUD_115200
     WAIT_FRAME_MS = 16.6
     ERROR_BLINK_MS = 50
     ERROR_BLINK_COUNT = 6
     WIFI_TIMEOUT_SEC = 30
     
-    # UART Baud Rate Mapping (IchigoJam compatibility)
+    # UARTボーレートマッピング (IchigoJam互換)
     BAUD_MAP = {
         1: BAUD_115200, 2: BAUD_115200, 3: BAUD_57600, 4: BAUD_38400, 
         5: BAUD_31250, 6: BAUD_19200, 7: BAUD_9600, 8: BAUD_4800, 9: BAUD_2400
     }
     
-    # Help Data
+    # ヘルプデータ
     HELP_DATA = {
         "LED": "LED(val): 1=ON, 0=OFF, -1=Toggle.",
         "WAIT": "WAIT(time, unit='frame'): frame, ms, or sec.",
@@ -372,10 +372,10 @@ class IchigoJam:
         "CLT": "CLT(): Reset tick count (pseudo).",
         "PR": "PR(*args): Alias for print(). Shortcut for IchigoJam '?' command.",
         "P": "P(*args): Even shorter alias for print().",
-        "PLAY": "PLAY(mml, loop=False): Play Music Macro Language (MML). Use PLAY() to stop.",
+        "PLAY": "PLAY(mml, loop=False): MML(Music Macro Language)を再生。PLAY()で停止。",
     }
 
-    # Sound Constants & Map
+    # 音声定数とマップ
     NOTE_C4 = 262
     NOTE_D4 = 294
     NOTE_E4 = 330
@@ -391,7 +391,7 @@ class IchigoJam:
         "C5": NOTE_C5, "C#5": 554, "D5": 587, "D#5": 622, "E5": 659, "F5": 698,
     }
 
-    # Default GPIO Configuration
+    # デフォルトのGPIO構成
     PIN_BUZZER_DEFAULT = 15
     PIN_BUTTON_DEFAULT = 14
     PIN_LED_DEFAULT = 25
@@ -401,7 +401,7 @@ class IchigoJam:
     PIN_I2C_SCL_XIAO = 5
 
     def __init__(self):
-        # Board Detection
+        # ボード検出
         try:
             self.machine_name = os.uname().machine
         except:
@@ -410,7 +410,7 @@ class IchigoJam:
         self.IS_PICO_W = "Pico W" in self.machine_name
         self.IS_XIAO = "XIAO RP2040" in self.machine_name
         
-        # Pin Assignments
+        # ピン割り当て
         self.PIN_LED = "LED" if self.IS_PICO_W else self.PIN_LED_DEFAULT
         self.PIN_BUZZER = self.PIN_BUZZER_DEFAULT
         self.PIN_BUTTON = self.PIN_BUTTON_DEFAULT
@@ -422,7 +422,7 @@ class IchigoJam:
             self.PIN_SDA = self.PIN_I2C_SDA_PICO
             self.PIN_SCL = self.PIN_I2C_SCL_PICO
         
-        # Resource Managers
+        # リソースマネージャー
         self.pio_mgr = PIOManager()
         self.mml_player = MMLPlayer(self.pio_mgr, self.PIN_BUZZER_DEFAULT)
         self._led_pin = None
@@ -451,8 +451,8 @@ class IchigoJam:
         print("IchigoJam システム: 終了しました。")
 
     def _warn_error(self, msg: str) -> None:
-        """Display error and blink LED for warning."""
-        print(f"ERROR: {msg}")
+        """エラーを表示し、警告のためにLEDを点滅させます。"""
+        print(f"エラー: {msg}")
         try:
             if self._led_pin is None:
                 self._led_pin = machine.Pin(self.PIN_LED, machine.Pin.OUT)
@@ -463,7 +463,7 @@ class IchigoJam:
 
     def _validate_gpio(self, pin: int, cmd: str) -> bool:
         if not isinstance(pin, int) or pin < 0 or pin > 29:
-            self._warn_error(f"{cmd}: Pin {pin} is out of range.")
+            self._warn_error(f"{cmd}: ピン {pin} は範囲外です。")
             return False
         return True
 
@@ -475,11 +475,11 @@ class IchigoJam:
                 self._led_pin.value(not self._led_pin.value())
             else:
                 self._led_pin.value(1 if val else 0)
-        except OSError as e: self._warn_error(f"LED Hardware: {e}")
-        except Exception as e: self._warn_error(f"LED: {e}")
+        except OSError as e: self._warn_error(f"LED ハードウェアエラー: {e}")
+        except Exception as e: self._warn_error(f"LED エラー: {e}")
 
     def WAIT(self, time: int, unit: str = "frame") -> None:
-        """Wait for specified time."""
+        """指定された時間だけ待機します。"""
         if unit == "frame": utime.sleep_ms(int(time * self.WAIT_FRAME_MS))
         elif unit == "ms": utime.sleep_ms(time)
         else: utime.sleep(time)
@@ -504,23 +504,19 @@ class IchigoJam:
                 sm = rp2.StateMachine(sm_id, _out_program, freq=1000000, out_base=pio_pins[0])
                 sm.active(1); sm.put(pin); utime.sleep_ms(1); sm.active(0)
                 self.pio_mgr.free_sm(sm_id)
-        except OSError as e: self._warn_error(f"OUT Hardware: {e}")
-        except ValueError as e: self._warn_error(f"OUT Value: {e}")
-        except Exception as e: self._warn_error(f"OUT: {e}")
+        except OSError as e: self._warn_error(f"OUT ハードウェアエラー: {e}")
+        except ValueError as e: self._warn_error(f"OUT 値エラー: {e}")
+        except Exception as e: self._warn_error(f"OUT エラー: {e}")
 
     def BEEP(self, note: Union[int, str] = 440, duration: int = 10) -> None:
         try:
             freq = self.NOTE_MAP.get(note, note) if isinstance(note, str) else note
             if freq <= 0: return
             cycle_us = 1000000 // freq
-            sm_id = self.pio_mgr.get_sm()
-            if sm_id < 0: return
-            self.pio_mgr.load_program(sm_id, _beep_program)
-            sm = rp2.StateMachine(sm_id, _beep_program, freq=2000000, sideset_base=machine.Pin(self.PIN_BUZZER))
             sm.active(1); sm.put(cycle_us); utime.sleep_ms(duration * 16); sm.active(0)
             self.pio_mgr.free_sm(sm_id)
-        except OSError as e: self._warn_error(f"BEEP Hardware: {e}")
-        except Exception as e: self._warn_error(f"BEEP: {e}")
+        except OSError as e: self._warn_error(f"BEEP ハードウェアエラー: {e}")
+        except Exception as e: self._warn_error(f"BEEP エラー: {e}")
 
     def ANA(self, pin: int, volt: bool = False) -> float:
         try:
@@ -577,18 +573,18 @@ class IchigoJam:
     def SAVE(self, target: Union[int, str]) -> None:
         try:
             fn = f"slot{target}.py" if isinstance(target, int) else target
-            with open(fn, "w") as f: f.write("# Saved by IchigoJam Library\n")
-            print(f"Saved to {fn}")
-        except Exception as e: self._warn_error(f"SAVE: {e}")
+            with open(fn, "w") as f: f.write("# IchigoJamライブラリによって保存されました\n")
+            print(f"{fn} に保存しました")
+        except Exception as e: self._warn_error(f"SAVE エラー: {e}")
 
     def LOAD(self, target: Union[int, str]) -> str:
         try:
             fn = f"slot{target}.py" if isinstance(target, int) else target
             with open(fn, "r") as f: return f.read()
-        except Exception as e: self._warn_error(f"LOAD: {e}"); return ""
+        except Exception as e: self._warn_error(f"LOAD エラー: {e}"); return ""
 
     def WIFI(self, ssid: str, password: str) -> None:
-        """Connect to WiFi."""
+        """WiFiに接続します。"""
         try:
             if self.IS_PICO_W:
                 wlan = network.WLAN(network.STA_IF)
@@ -598,8 +594,8 @@ class IchigoJam:
                 while not wlan.isconnected() and timeout > 0: utime.sleep(1); timeout -= 1
                 if wlan.isconnected(): print("接続完了:", wlan.ifconfig()[0])
                 else: self._warn_error("WIFI: 接続タイムアウト")
-        except OSError as e: self._warn_error(f"WIFI Hardware: {e}")
-        except Exception as e: self._warn_error(f"WIFI: {e}")
+        except OSError as e: self._warn_error(f"WIFI ハードウェアエラー: {e}")
+        except Exception as e: self._warn_error(f"WIFI エラー: {e}")
 
     def CORE2(self, func: Callable) -> None:
         try: _thread.start_new_thread(func, ())
@@ -616,7 +612,7 @@ class IchigoJam:
         return self._i2c
 
     def I2CW(self, addr: int, data: Union[int, List[int], bytes]) -> int:
-        """I2C Write. Returns 1 on success, 0 on failure."""
+        """I2C書き込み。成功時に1、失敗時に0を返します。"""
         try:
             if isinstance(data, int): data = bytes([data])
             elif isinstance(data, list): data = bytes(data)
@@ -627,7 +623,7 @@ class IchigoJam:
             return 0
 
     def I2CR(self, addr: int, size: int) -> list:
-        """I2C Read. Returns list of bytes, empty list on failure."""
+        """I2C読み込み。バイトリストを返します。失敗時は空リストを返します。"""
         try:
             return list(self._get_i2c().readfrom(addr, size))
         except Exception as e:
@@ -635,7 +631,7 @@ class IchigoJam:
             return []
 
     def UART(self, val: Union[int, str, bytes]) -> None:
-        """Set baud rate or send data. val=1-9: map to baud rate, val>=300: direct baud, str/bytes: send."""
+        """ボーレートを設定するかデータを送信します。val=1-9: ボーレートに写像、val>=300: 直接指定、str/bytes: 送信。"""
         try:
             if isinstance(val, int):
                 # Map 1-9 to specific baud rates, others used directly
@@ -658,7 +654,7 @@ class IchigoJam:
     
     def FREE(self) -> int:
         gc.collect(); f, a = gc.mem_free(), gc.mem_alloc()
-        print(f"Free: {f}, Alloc: {a}, Total: {f+a}"); return f
+        print(f"空き: {f}, 使用中: {a}, 合計: {f+a}"); return f
 
     def FILES(self) -> None:
         for f in os.listdir(): print(f)
@@ -668,7 +664,7 @@ class IchigoJam:
         else: print("Available Commands: " + ", ".join(sorted(self.HELP_DATA.keys())))
 
     def PLAY(self, mml: str = "", loop: bool = False) -> None:
-        """Play Music Macro Language (MML). Use PLAY() to stop."""
+        """MML (Music Macro Language) を再生します。停止するには PLAY() を使用します。"""
         if not mml:
             self.mml_player.stop()
         else:
@@ -677,9 +673,9 @@ class IchigoJam:
             self.mml_player.play(mml, loop)
 
     def PINS(self) -> None:
-        print(f"Board: {self.machine_name}")
-        print(f"I/O: LED={self.PIN_LED}, BZ={self.PIN_BUZZER}, BTN={self.PIN_BUTTON}")
-        print(f"Comm: I2C(SCL:{self.PIN_SCL}, SDA:{self.PIN_SDA}), UART(TX:0, RX:1)")
+        print(f"ボード: {self.machine_name}")
+        print(f"I/O構成: LED={self.PIN_LED}, ブザー={self.PIN_BUZZER}, ボタン={self.PIN_BUTTON}")
+        print(f"通信設定: I2C(SCL:{self.PIN_SCL}, SDA:{self.PIN_SDA}), UART(TX:0, RX:1)")
 
     def _iot_request(self, method: str, url: str, data: str = None, follow_redirects: bool = True) -> str:
         try:
@@ -695,13 +691,13 @@ class IchigoJam:
             addr = socket.getaddrinfo(host, port)[0][-1]
             s = socket.socket()
             s.connect(addr)
-            if port == 443:
+                if port == 443:
                 if self.cert_validate:
                     if self.ca_file:
                         # 証明書検証あり
                         s = ssl.wrap_socket(s, server_hostname=host, cert_reqs=ssl.CERT_REQUIRED, ca_certs=self.ca_file)
                     else:
-                        print("WARNING: cert_validate is True but no ca_file specified. Proceeding with host-only verify.")
+                        print("警告: cert_validate が True ですが、ca_file が指定されていません。ホストのみの検証を続行します。")
                         s = ssl.wrap_socket(s, server_hostname=host)
                 else:
                     # 検証なし (デフォルト)
@@ -769,7 +765,7 @@ def FILES(): return ij.FILES()
 def HELP(cmd: str = None): return ij.HELP(cmd)
 def PLAY(mml: str = "", loop: bool = False) -> None: ij.PLAY(mml, loop)
 def PINS(): return ij.PINS()
-def VERSION(): return "IchigoJam Python v2.1 (Class-based)"
+def VERSION(): return "IchigoJam Python v2.1 (クラスベース版)"
 def OK(): print("OK")
 def IOT_CONFIG(cert_validate: bool = None): return ij.IOT_CONFIG(cert_validate)
 def PR(*args, **kwargs): return ij.PR(*args, **kwargs)
