@@ -9,6 +9,7 @@ import ussl as ssl
 import _thread
 import os
 import gc
+from typing import Optional, Union, Any, List, Tuple, Callable
 
 # --- PIO Resource Manager ---
 
@@ -217,9 +218,10 @@ class IchigoJam:
         self._led_pin = None
         self._active_pwm = {}
         self._i2c = None
-        self._uart = None
-        self._tick_offset = 0
-        self.cert_validate = False
+        self._uart: Optional[machine.UART] = None
+        self._tick_offset: int = 0
+        self.cert_validate: bool = False
+        self.ca_file: Optional[str] = None
     
     def deinit(self):
         """すべてのリソースを解放し、PIOをリセットします。"""
@@ -238,7 +240,7 @@ class IchigoJam:
         gc.collect()
         print("IchigoJam System: Deinitialized.")
 
-    def _warn_error(self, msg: str):
+    def _warn_error(self, msg: str) -> None:
         """Display error and blink LED for warning."""
         print(f"ERROR: {msg}")
         try:
@@ -275,7 +277,7 @@ class IchigoJam:
         if not self._validate_gpio(pin, "IN"): return 0
         return machine.Pin(pin, machine.Pin.IN, machine.Pin.PULL_UP).value()
 
-    def OUT(self, pin: int, val: int = None) -> None:
+    def OUT(self, pin: int, val: Optional[int] = None) -> None:
         try:
             if val is not None:
                 if not self._validate_gpio(pin, "OUT"): return
@@ -293,7 +295,7 @@ class IchigoJam:
                 self.pio_mgr.free_sm(sm_id)
         except Exception as e: self._warn_error(f"OUT: {e}")
 
-    def BEEP(self, note: int = 440, duration: int = 10) -> None:
+    def BEEP(self, note: Union[int, str] = 440, duration: int = 10) -> None:
         try:
             freq = _NOTE_MAP.get(note, note) if isinstance(note, str) else note
             if freq <= 0: return
@@ -334,7 +336,7 @@ class IchigoJam:
             sm.active(1); sm.put(high_us); sm.put(low_us); self._active_pwm[pin] = (sm_id, sm)
         except Exception as e: self._warn_error(f"PWM: {e}")
 
-    def WS_LED(self, data: list, pin: int = 25) -> None:
+    def WS_LED(self, data: List[Union[int, Tuple[int, int, int]]], pin: int = 25) -> None:
         try:
             sm_id = self.pio_mgr.get_sm()
             if sm_id < 0: return
@@ -347,25 +349,25 @@ class IchigoJam:
             utime.sleep_ms(1); sm.active(0); self.pio_mgr.free_sm(sm_id)
         except Exception as e: self._warn_error(f"WS_LED: {e}")
 
-    def RND(self, a: int, b: int = None) -> int:
+    def RND(self, a: int, b: Optional[int] = None) -> int:
         if b is None: return random.getrandbits(16) % a if a > 0 else 0
         return random.randint(a, b - 1)
 
-    def BTN(self, callback=None) -> int:
+    def BTN(self, callback: Optional[Callable] = None) -> int:
         try:
             btn_pin = machine.Pin(self.PIN_BUTTON, machine.Pin.IN, machine.Pin.PULL_UP)
             if callback: btn_pin.irq(trigger=machine.Pin.IRQ_FALLING, handler=lambda p: callback())
             return not btn_pin.value()
         except Exception as e: self._warn_error(f"BTN: {e}"); return 0
 
-    def SAVE(self, target) -> None:
+    def SAVE(self, target: Union[int, str]) -> None:
         try:
             fn = f"slot{target}.py" if isinstance(target, int) else target
             with open(fn, "w") as f: f.write("# Saved by IchigoJam Library\n")
             print(f"Saved to {fn}")
         except Exception as e: self._warn_error(f"SAVE: {e}")
 
-    def LOAD(self, target) -> str:
+    def LOAD(self, target: Union[int, str]) -> str:
         try:
             fn = f"slot{target}.py" if isinstance(target, int) else target
             with open(fn, "r") as f: return f.read()
@@ -381,7 +383,7 @@ class IchigoJam:
             else: self._warn_error("WIFI: Connection timeout")
         except Exception as e: self._warn_error(f"WIFI: {e}")
 
-    def CORE2(self, func) -> None:
+    def CORE2(self, func: Callable) -> None:
         try: _thread.start_new_thread(func, ())
         except Exception as e: self._warn_error(f"CORE2: {e}")
 
@@ -395,7 +397,7 @@ class IchigoJam:
         if self._i2c is None: self._i2c = machine.I2C(0, scl=machine.Pin(self.PIN_SCL), sda=machine.Pin(self.PIN_SDA))
         return self._i2c
 
-    def I2CW(self, addr: int, data) -> int:
+    def I2CW(self, addr: int, data: Union[int, List[int], bytes]) -> int:
         """I2C Write. Returns 1 on success, 0 on failure."""
         try:
             if isinstance(data, int): data = bytes([data])
@@ -414,7 +416,7 @@ class IchigoJam:
             self._warn_error(f"I2CR: {e}")
             return []
 
-    def UART(self, val) -> None:
+    def UART(self, val: Union[int, str, bytes]) -> None:
         """Set baud rate or send data. val=1-9: map to baud rate, val>=300: direct baud, str/bytes: send."""
         try:
             if isinstance(val, int):
@@ -467,9 +469,16 @@ class IchigoJam:
             s = socket.socket()
             s.connect(addr)
             if port == 443:
-                s = ssl.wrap_socket(s, server_hostname=host)
                 if self.cert_validate:
-                    print("CAUTION: Certificate validation requested but CA bundle not specified.")
+                    if self.ca_file:
+                        # 証明書検証あり
+                        s = ssl.wrap_socket(s, server_hostname=host, cert_reqs=ssl.CERT_REQUIRED, ca_certs=self.ca_file)
+                    else:
+                        print("WARNING: cert_validate is True but no ca_file specified. Proceeding with host-only verify.")
+                        s = ssl.wrap_socket(s, server_hostname=host)
+                else:
+                    # 検証なし (デフォルト)
+                    s = ssl.wrap_socket(s, server_hostname=host)
             
             req = f"{method} {path} HTTP/1.0\r\nHost: {host}\r\n"
             if data: req += f"Content-Length: {len(data)}\r\n\r\n{data}"
@@ -484,13 +493,23 @@ class IchigoJam:
             return res.split("\r\n\r\n", 1)[1] if "\r\n\r\n" in res else res
         except Exception as e: self._warn_error(f"IOT: {e}"); return None
 
-    def IOT_CONFIG(self, cert_validate: bool = None) -> None:
+    def IOT_CONFIG(self, cert_validate: Optional[bool] = None, ca_file: Optional[str] = None) -> None:
+        """IoT通信のセキュリティ設定を行います。
+        cert_validate: Trueで証明書検証を有効化。
+        ca_file: 検証に使用する証明書ファイルのパスを指定。
+        """
         if cert_validate is not None:
             self.cert_validate = cert_validate
             print(f"IoT Cert Validation: {'ENABLED' if cert_validate else 'DISABLED'}")
+        if ca_file is not None:
+            self.ca_file = ca_file
+            print(f"CA File set to: {ca_file}")
 
-    def IOT_GET(self, url: str) -> str: return self._iot_request("GET", url)
-    def IOT_POST(self, url: str, data: str) -> str: return self._iot_request("POST", url, data)
+    def IOT_GET(self, url: str) -> Optional[str]: 
+        return self._iot_request("GET", url)
+
+    def IOT_POST(self, url: str, data: str) -> Optional[str]: 
+        return self._iot_request("POST", url, data)
 
 # --- Global Instance and Wrappers ---
 

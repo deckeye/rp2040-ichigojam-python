@@ -1,6 +1,7 @@
 import machine
 import utime
 import sys
+from typing import Optional, Union, Any, List, Tuple
 
 # Try to import USB HID for actual keyboard/mouse emulation
 try:
@@ -28,7 +29,7 @@ RAM_SIZE = 4096
 _virtual_ram = bytearray(RAM_SIZE)
 _sprite_buf = {} # id -> (data, x, y)
 
-def USB_KEYBOARD(text): 
+def USB_KEYBOARD(text: str) -> None: 
     """Emulate USB keyboard typing."""
     if _HID_AVAILABLE:
         try:
@@ -38,7 +39,7 @@ def USB_KEYBOARD(text):
         except: pass
     print(f"USB Keyboard [SIM]: Typing '{text}'")
 
-def USB_MOUSE(x, y, click=0): 
+def USB_MOUSE(x: int, y: int, click: int = 0) -> None: 
     """Emulate USB mouse movement."""
     if _HID_AVAILABLE:
         try:
@@ -49,11 +50,11 @@ def USB_MOUSE(x, y, click=0):
         except: pass
     print(f"USB Mouse [SIM]: Move({x},{y}) Click:{click}")
 
-def USB_JOYPAD(buttons, axis_x=0, axis_y=0): 
+def USB_JOYPAD(buttons: int, axis_x: int = 0, axis_y: int = 0) -> None: 
     """Emulate USB gamepad (stub)."""
     print(f"USB Joypad [HID]: Buttons:{bin(buttons)} Axes:({axis_x},{axis_y})")
 
-def SPRITE(id, data=None, x=None, y=None): 
+def SPRITE(id: Union[int, str], data: Optional[List[int]] = None, x: Optional[int] = None, y: Optional[int] = None) -> None: 
     """Sprite drawing and management (prototype)."""
     if data is not None:
         _sprite_buf[id] = {"data": data, "x": x or 0, "y": y or 0}
@@ -64,25 +65,25 @@ def SPRITE(id, data=None, x=None, y=None):
         if y is not None: s["y"] = y
         print(f"Sprite {id}: Moved to ({s['x']},{s['y']})")
 
-def DRAW_BUFFER(): 
+def DRAW_BUFFER() -> None: 
     """Flush virtual buffer to display (stub)."""
     print(f"Drawing {len(_sprite_buf)} sprites to screen...")
 
-def PEEK(addr):
+def PEEK(addr: int) -> int:
     """Read from address (4KB Virtual RAM)."""
     if 0 <= addr < RAM_SIZE:
         return _virtual_ram[addr]
     print(f"PEEK: Address {addr} out of range.")
     return 0
 
-def POKE(addr, val):
+def POKE(addr: int, val: int) -> None:
     """Write to address (4KB Virtual RAM)."""
     if 0 <= addr < RAM_SIZE:
         _virtual_ram[addr] = val & 0xFF
     else:
         print(f"POKE: Address {addr} out of range.")
 
-def HELP_EXPERIMENTAL():
+def HELP_EXPERIMENTAL() -> None:
     """Show help for experimental commands."""
     print("Experimental Commands (Phase 3):")
     if not _HID_AVAILABLE:
